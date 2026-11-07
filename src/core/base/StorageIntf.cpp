@@ -788,6 +788,12 @@ static void TVPClearArchiveCache() { TVPArchiveCache.Clear(); }
 static tTVPAtExit TVPClearArchiveCacheAtExit
 	(TVP_ATEXIT_PRI_SHUTDOWN, TVPClearArchiveCache);
 //---------------------------------------------------------------------------
+void TVPClearStorageArchiveCache()
+{
+	tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
+	TVPClearArchiveCache();
+}
+//---------------------------------------------------------------------------
 
 
 

@@ -61,14 +61,10 @@ static tTJSCriticalSection TVPArchiveHandleCacheCS;
 tTJSBinaryStream * TVPGetCachedArchiveHandle(void * pointer, const ttstr & name)
 {
 	// get cached archive file handle from the pool
-	if(TVPArchiveHandleCacheShutdown)
-	{
-		// the pool has shutdown
-		return TVPCreateStream(name);
-	}
-
 	tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
 
+	// bevy port: the pool is rebuilt in a new session; TVPShutdownArchiveHandleCache
+	// deallocates it and may run again at the end of the next session.
 	if(!TVPArchiveHandleCacheInit)
 	{
 		// initialize the pool
@@ -81,6 +77,7 @@ tTJSBinaryStream * TVPGetCachedArchiveHandle(void * pointer, const ttstr & name)
 			TVPArchiveHandleCachePool[i].Age = 0;
 		}
 		TVPArchiveHandleCacheInit = true;
+		TVPArchiveHandleCacheShutdown = false;
 	}
 
 	// linear search wiil be enough here because the 
@@ -206,6 +203,10 @@ static void TVPShutdownArchiveHandleCache()
 			delete TVPArchiveHandleCachePool[i].Stream;
 	}
 	delete [] TVPArchiveHandleCachePool;
+	// bevy port: forget the pool; a later session builds a new one. Without
+	// this the next shutdown would delete it a second time.
+	TVPArchiveHandleCachePool = NULL;
+	TVPArchiveHandleCacheInit = false;
 }
 //---------------------------------------------------------------------------
 static tTVPAtExit TVPShutdownArchiveCacheAtExit

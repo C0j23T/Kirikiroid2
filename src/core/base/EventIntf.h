@@ -284,6 +284,9 @@ extern void TVPDeliverCompactEvent(tjs_int level);
 	// must be called by each platforms's implementation
 //---------------------------------------------------------------------------
 
+extern void TVPUninitEventState();
+//---------------------------------------------------------------------------
+
 
 
 

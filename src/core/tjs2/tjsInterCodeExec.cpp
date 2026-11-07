@@ -606,6 +606,19 @@ void tTJSVariantArrayStack::DecreaseVariantArray(void)
 		Current = Arrays + NumArraysUsing-1;
 }
 //---------------------------------------------------------------------------
+//---------------------------------------------------------------------------
+void tTJSVariantArrayStack::ClearVariants()
+{
+	// bevy port: every slot was constructed by IncreaseVariantArray, so all of
+	// them are variants; clearing a cleared slot does nothing.
+	for(tjs_int i = 0; i < NumArraysAllocated; i++)
+	{
+		tTJSVariant *array = Arrays[i].Array;
+		if(!array) continue;
+		for(tjs_int j = 0; j < Arrays[i].Allocated; j++) array[j].Clear();
+	}
+}
+//---------------------------------------------------------------------------
 void tTJSVariantArrayStack::InternalCompact(void)
 {
 	// minimize variant array block

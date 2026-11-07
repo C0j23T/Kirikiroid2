@@ -97,6 +97,22 @@ void tTJSScriptBlock::Release(void)
 		RefCount--;
 }
 //---------------------------------------------------------------------------
+void tTJSScriptBlock::ReleaseContexts()
+{
+	if(TopLevelContext)
+	{
+		tTJSInterCodeContext *context = TopLevelContext;
+		TopLevelContext = NULL;
+		context->Release();
+	}
+
+	while(ContextStack.size())
+	{
+		ContextStack.top()->Release();
+		ContextStack.pop();
+	}
+}
+//---------------------------------------------------------------------------
 void tTJSScriptBlock::SetName(const tjs_char *name, tjs_int lineofs)
 {
 	if(Name) delete [] Name, Name = NULL;

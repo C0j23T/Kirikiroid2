@@ -929,6 +929,15 @@ static void TVPDestroyContinuousHandlerVector()
 static tTVPAtExit TVPDestroyContinuousHandlerVectorAtExit
 	(TVP_ATEXIT_PRI_PREPARE, TVPDestroyContinuousHandlerVector);
 //---------------------------------------------------------------------------
+void TVPUninitEventState()
+{
+	TVPDestroyEventQueue();
+	TVPDestroyContinuousHandlerVector();
+	TVPContinuousEventVector.clear();
+	TVPProcessContinuousHandlerEventFlag = false;
+	TVPExclusiveEventPosted = false;
+}
+//---------------------------------------------------------------------------
 void TVPAddContinuousEventHook(tTVPContinuousEventCallbackIntf *cb)
 {
 	TVPBeginContinuousEvent();
@@ -1120,6 +1129,8 @@ bool TVPEnableGlobalHeapCompaction = false;
 //---------------------------------------------------------------------------
 void TVPAddCompactEventHook(tTVPCompactEventCallbackIntf *cb)
 {
+	if(std::find(TVPCompactEventVector.begin(), TVPCompactEventVector.end(), cb) !=
+		TVPCompactEventVector.end()) return;
 	TVPCompactEventVector.push_back(cb);
 }
 //---------------------------------------------------------------------------

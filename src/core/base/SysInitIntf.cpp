@@ -34,8 +34,12 @@ extern void TVPGL_C_Init();
 //---------------------------------------------------------------------------
 // TVPSystemInit : Entire System Initialization
 //---------------------------------------------------------------------------
+static bool TVPAtExitShutdown = false; // defined below, used by TVPSystemInit
 void TVPSystemInit(void)
 {
+	TVPSystemUninitCalled = false;
+	TVPAtExitShutdown = false;
+
 #if CC_TARGET_PLATFORM != CC_PLATFORM_WIN32
 #ifndef CC_TARGET_OS_IPHONE
 	if (!TVPProtectInit()) return;
@@ -116,13 +120,15 @@ struct tTVPAtExitInfo
 
 };
 static std::vector<tTVPAtExitInfo> *TVPAtExitInfos = NULL;
-static bool TVPAtExitShutdown = false;
 //---------------------------------------------------------------------------
 void TVPAddAtExitHandler(tjs_int pri, void (*handler)())
 {
 	if(TVPAtExitShutdown) return;
 
 	if(!TVPAtExitInfos) TVPAtExitInfos = new std::vector<tTVPAtExitInfo>();
+	for(std::vector<tTVPAtExitInfo>::iterator i = TVPAtExitInfos->begin();
+		i != TVPAtExitInfos->end(); i++)
+		if(i->Handler == handler) return;
 	TVPAtExitInfos->push_back(tTVPAtExitInfo(pri, handler));
 }
 //---------------------------------------------------------------------------
@@ -131,15 +137,16 @@ static void TVPCauseAtExit()
 	if(TVPAtExitShutdown) return;
 	TVPAtExitShutdown = true;
 
-	std::sort(TVPAtExitInfos->begin(), TVPAtExitInfos->end()); // descending sort
-
-	std::vector<tTVPAtExitInfo>::iterator i;
-	for(i = TVPAtExitInfos->begin(); i!=TVPAtExitInfos->end(); i++)
+	if(TVPAtExitInfos)
 	{
-		i->Handler();
-	}
+		std::sort(TVPAtExitInfos->begin(), TVPAtExitInfos->end()); // descending sort
 
-	delete TVPAtExitInfos;
+		std::vector<tTVPAtExitInfo>::iterator i;
+		for(i = TVPAtExitInfos->begin(); i!=TVPAtExitInfos->end(); i++)
+		{
+			i->Handler();
+		}
+	}
 }
 //---------------------------------------------------------------------------
 

@@ -87,6 +87,9 @@ void TVPUninitializeFontRasterizers() {
 		delete TVPFontSystem;
 		TVPFontSystem = NULL;
 	}
+	// bevy port: let TVPInializeFontRasterizers build them again for a later
+	// session; the host may start another instance in the same process.
+	TVPFontRasterizersInit = false;
 }
 static tTVPAtExit
 	TVPUninitializeFontRaster(TVP_ATEXIT_PRI_RELEASE, TVPUninitializeFontRasterizers);

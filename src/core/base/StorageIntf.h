@@ -276,6 +276,8 @@ TJS_EXP_FUNC_DEF(void, TVPClearStorageCaches, ());
 void TVPRemoveFromStorageCache(const ttstr &name);
 extern tjs_uint TVPSegmentCacheLimit; // XP3 segment cache limit, in bytes.
 
+extern void TVPClearStorageArchiveCache();
+
 //---------------------------------------------------------------------------
 
 

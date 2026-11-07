@@ -126,6 +126,17 @@ public:
 
 	tTJSVariantArrayStack* GetVariantArrayStack() { return VariantArrayStack; }
 
+	// bevy port: how many parsed script blocks are still alive. A block and its
+	// code contexts reference each other, so a block that executed a function
+	// stays allocated; the host reports that instead of leaking silently when
+	// it runs one engine session after another.
+	tjs_int GetLiveScriptBlockCount() const { return (tjs_int)ScriptBlocks.size(); }
+
+	// bevy port: break the script-block reference cycles and drop the
+	// references that keep the blocks alive. Meant to be called when the
+	// interpreter is destroyed and its global object has been cleared.
+	void ReleaseScriptBlocks();
+
 private:
 	void AddScriptBlock(tTJSScriptBlock *block);
 	void RemoveScriptBlock(tTJSScriptBlock *block);

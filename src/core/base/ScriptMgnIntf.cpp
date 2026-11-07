@@ -401,11 +401,13 @@ class tTVPTJSGCCallback : public tTVPCompactEventCallbackIntf
 //---------------------------------------------------------------------------
 // TVPInitScriptEngine
 //---------------------------------------------------------------------------
-static bool TVPScriptEngineInit = false;
 void TVPInitScriptEngine()
 {
-	if(TVPScriptEngineInit) return;
-	TVPScriptEngineInit = true;
+	// bevy port: the guard follows the interpreter object instead of being
+	// one-shot for the whole process. The host stops an instance and may
+	// start another one later (krkr_engine_init after krkr_engine_shutdown),
+	// which needs a fresh interpreter.
+	if(TVPScriptEngine) return;
 
 	tTJSVariant val;
 
@@ -563,13 +565,28 @@ void TVPInitScriptEngine()
 //---------------------------------------------------------------------------
 // TVPUninitScriptEngine
 //---------------------------------------------------------------------------
-static bool TVPScriptEngineUninit = false;
 void TVPUninitScriptEngine()
 {
-	if(TVPScriptEngineUninit) return;
-	TVPScriptEngineUninit = true;
+	// bevy port: idempotent per interpreter, not once per process; see
+	// TVPInitScriptEngine.
+	if(!TVPScriptEngine) return;
 
-	//TVPScriptEngine->Shutdown();
+	// bevy port: tear the object graph down instead of just dropping the
+	// interpreter. Upstream never needed to because the process ended here;
+	// the host keeps it running and starts another instance later, and
+	// reference cycles (Layer <-> layer manager, script block <-> code
+	// context) would keep their bitmaps and code alive for good.
+	TVPScriptEngine->Shutdown();
+	{
+		tjs_int live = TVPScriptEngine->GetLiveScriptBlockCount();
+		if(live > 0)
+		{
+			tjs_char buf[192];
+			TJS_snprintf(buf, 192, TJS_W("(warning) %d script block(s) could not be released "),
+				(int)live);
+			TVPAddImportantLog(ttstr(buf) + TJS_W("(TJS2 keeps them for their reference cycle)"));
+		}
+	}
 	TVPScriptEngine->Release();
 	/*
 		Objects, theirs lives are contolled by reference counter, may not be all
@@ -587,7 +604,6 @@ void TVPUninitScriptEngine()
 void TVPRestartScriptEngine()
 {
 	TVPUninitScriptEngine();
-	TVPScriptEngineInit = false;
 	TVPInitScriptEngine();
 }
 //---------------------------------------------------------------------------
