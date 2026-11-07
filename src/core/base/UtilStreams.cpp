@@ -370,6 +370,10 @@ tjs_uint64 TJS_INTF_METHOD tTVPPartialStream::GetSize()
 
 
 
+// bevy port: everything below implements tTVPUnpackArchive (extracting zip/7z/rar
+// archives for the cocos2d file browser, environ/ui). The bevy port has no such
+// UI, so it is compiled out together with its libarchive/7zip/unrar dependencies.
+#ifndef KRKR_BEVY_PORT
 extern "C" {
 #include "libarchive/archive.h"
 #include "libarchive/archive_entry.h"
@@ -1050,3 +1054,4 @@ tTVPUnpackArchive::~tTVPUnpackArchive()
 {
 	if (ArcThread) delete ArcThread;
 }
+#endif // KRKR_BEVY_PORT

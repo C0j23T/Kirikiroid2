@@ -22,6 +22,16 @@
 #endif
 #define INTMAX_MAX		0x7fffffffffffffff
 #include <assert.h>
+// bevy port: these headers are also included inside namespace TJS further
+// down (glibc printf code). Including them here first makes those later
+// includes no-ops; newer libstdc++ rejects <math.h> inside a namespace.
+#include <ctype.h>
+#include <limits.h>
+#include <string.h>
+#include <stdarg.h>
+#include <stdint.h>
+#include <math.h>
+#include <float.h>
 
 /*
  * core/utils/cp932_uni.cpp
@@ -1380,7 +1390,8 @@ static void pad(_tFILE *f, tjs_char c, int w, int l, int fl)
 	l = w - l;
     int n = l >sizeof pad / sizeof(pad[0])? sizeof pad / sizeof(pad[0]): l;
     while(n--) pad[n] = c;
-	for (; l >= sizeof pad; l -= sizeof pad)
+	// bevy port: count elements, not bytes (tjs_char is 2 bytes wide).
+	for (; l >= (int)(sizeof pad / sizeof(pad[0])); l -= sizeof pad / sizeof(pad[0]))
 		out(f, pad, sizeof pad / sizeof(pad[0]));
 	out(f, pad, l);
 }
@@ -1934,8 +1945,19 @@ int _vsnprintf(tjs_char * s, size_t n, const tjs_char * fmt, va_list ap)
     int nl_type[NL_ARGMAX+1] = {0};
     union arg nl_arg[NL_ARGMAX+1];
     unsigned char internal_buf[80], *saved_buf = 0;
+#ifdef KRKR_BEVY_PORT
+    // bevy port: `(va_list *)&ap` is only valid where va_list is passed as a
+    // struct (ARM). On x86-64 a va_list parameter decays to a pointer, so &ap
+    // points at that pointer and printf_core reads garbage arguments (stack
+    // overflow in pad()). Copy it, as musl's vfprintf does.
+    va_list ap2;
+    va_copy(ap2, ap);
+    r = printf_core(&f, fmt, &ap2, nl_arg, nl_type);
+    va_end(ap2);
+#else
     va_list *pap = (va_list *)&ap;
     r = printf_core(&f, fmt, pap, nl_arg, nl_type);
+#endif
 
     /* Null-terminate, overwriting last char if dest buffer is full */
     return r;

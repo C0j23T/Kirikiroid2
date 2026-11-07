@@ -2,8 +2,10 @@
 #include "CCFileUtils.h"
 #include "GlobalConfigManager.h"
 #include "tinyxml2/tinyxml2.h"
+#ifndef KRKR_BEVY_PORT // bevy port: no cocos2d UI widgets
 #include "ui/UIText.h"
 #include "ui/UIButton.h"
+#endif
 
 LocaleConfigManager::LocaleConfigManager() {
 
@@ -13,6 +15,11 @@ std::string LocaleConfigManager::GetFilePath() {
 	std::string pathprefix = "locale/"; // constant file in app package
 	std::string fullpath = pathprefix + currentLangCode + ".xml"; // exp. "local/en_us.xml"
 	if (!cocos2d::FileUtils::getInstance()->isFileExist(fullpath)) {
+#ifdef KRKR_BEVY_PORT
+		// bevy port: the locale files are optional (texts fall back to their
+		// ids), so do not recurse forever when en_us.xml is missing too.
+		if (currentLangCode == "en_us") return std::string();
+#endif
 		currentLangCode = "en_us"; // restore to default language config(must exist)
 		return GetFilePath();
 	}
@@ -40,10 +47,16 @@ void LocaleConfigManager::Initialize(const std::string &sysLang) {
 	AllConfig.clear();
 	tinyxml2::XMLDocument doc;
 	std::string xmlData = cocos2d::FileUtils::getInstance()->getStringFromFile(GetFilePath());
+#ifdef KRKR_BEVY_PORT
+	// bevy port: ParseDeep is internal in upstream tinyxml2 (the system copy);
+	// Parse() is the public equivalent and also skips the BOM.
+	doc.Parse(xmlData.c_str(), xmlData.size());
+#else
 	bool _writeBOM = false;
 	const char* p = xmlData.c_str();
 	p = tinyxml2::XMLUtil::ReadBOM(p, &_writeBOM);
 	doc.ParseDeep((char*)p, nullptr);
+#endif
 	tinyxml2::XMLElement *rootElement = doc.RootElement();
 	if (rootElement) {
 		for (tinyxml2::XMLElement *item = rootElement->FirstChildElement(); item; item = item->NextSiblingElement()) {
@@ -56,6 +69,7 @@ void LocaleConfigManager::Initialize(const std::string &sysLang) {
 	}
 }
 
+#ifndef KRKR_BEVY_PORT // bevy port: no cocos2d UI widgets
 bool LocaleConfigManager::initText(cocos2d::ui::Text *ctrl) {
 	if (!ctrl) return false;
 	return initText(ctrl, ctrl->getString());
@@ -94,4 +108,4 @@ bool LocaleConfigManager::initText(cocos2d::ui::Button *ctrl, const std::string 
 	ctrl->setTitleText(txt);
 	return true;
 }
-
+#endif // KRKR_BEVY_PORT

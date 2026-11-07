@@ -2,6 +2,10 @@
 #include "tjsCommHead.h"
 #include <string>
 #include <vector>
+// bevy port: glibc defines st_atime/st_mtime/st_ctime as macros
+// (st_atim.tv_sec, ...). Include it before tTVP_stat so the member names
+// expand the same way here and at every use site.
+#include <sys/stat.h>
 
 struct TVPMemoryInfo
 { // all in kB
@@ -47,9 +51,16 @@ void TVPFetchSDCardPermission(); // for android only
 struct tTVP_stat {
 	uint16_t st_mode;
 	uint64_t st_size;
+#ifdef st_atime
+	// bevy port (glibc): st_atime etc. are macros for st_atim.tv_sec etc.
+	// Declare the timespec members they expand to, so `s.st_atime` keeps
+	// working at every use site.
+	struct timespec st_atim, st_mtim, st_ctim;
+#else
 	uint64_t st_atime;
 	uint64_t st_mtime;
 	uint64_t st_ctime;
+#endif
 };
 
 bool TVP_stat(const tjs_char *name, tTVP_stat &s);
