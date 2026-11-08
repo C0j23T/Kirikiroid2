@@ -623,8 +623,8 @@ public:
 		if (n >= CompressedBlock.size())
 			n = CompressedBlock.size() - 1;
 		Block &blk = CompressedBlock[n];
-		n = LZ4_decompress_fast(blk.Data, (char*)buf, blk.Height * Pitch);
-		assert(n == blk.Length);
+		n = krkr_lz4_decompress(blk.Data, blk.Length, (char*)buf, blk.Height * Pitch);
+		assert(n == blk.Height * Pitch);
 		return blk.Height;
 	}
 
@@ -739,8 +739,8 @@ public:
 		tjs_uint blkSize = BlockSize * Pitch;
 		tjs_uint clrBlkSize = blkSize / 4;
 		tjs_uint8 *tranbuf = (tjs_uint8 *)TVPAllocBitmapBits(blkSize, w, BlockSize);
-		n = LZ4_decompress_fast(blk.Data, (char*)tranbuf, blkSize);
-		assert(n == blk.Length);
+		n = krkr_lz4_decompress(blk.Data, blk.Length, (char*)tranbuf, blkSize);
+		assert(n == blkSize);
 		tjs_uint8 *current = buf, *prevline = buf, *outbufp[4];
 		outbufp[2] = tranbuf;
 		outbufp[1] = outbufp[2] + clrBlkSize;

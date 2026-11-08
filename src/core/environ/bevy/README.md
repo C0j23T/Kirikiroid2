@@ -19,7 +19,7 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, Opus) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, video, BPG/JXR/PVR images. They fail with a clear message. |
 | `BevyFileUtils.cpp` + `compat/platform/CCFileUtils.h` | the subset of cocos2d::FileUtils the core uses |
-| `compat/` | headers of cocos2d-x and of files missing from the open-source release (`Protect.h`, `tvpgl_route.h`, `aligned_allocator.h`), forwarding headers to system libraries |
+| `compat/` | headers of cocos2d-x and of files missing from the open-source release (`Protect.h`, `tvpgl_route.h`, `aligned_allocator.h`), forwarding headers to system libraries, and `krkr_shim.h` |
 
 Changes to upstream files (all marked `bevy port`):
 
