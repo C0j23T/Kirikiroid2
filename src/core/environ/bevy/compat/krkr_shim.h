@@ -20,6 +20,25 @@ int LZ4_compress_default(const char *src, char *dst, int srcSize, int dstCapacit
 
 size_t krkr_lz4_decompress(const char *src, size_t srcSize, char *dst, size_t dstSize);
 
+typedef struct KrkrArchiveReader {
+	void *userdata;
+	long long (*read)(void *userdata, void *buf, long long len);
+	long long (*seek)(void *userdata, long long offset, int whence);
+	long long size;
+} KrkrArchiveReader;
+
+#define KRKR_ARCHIVE_7Z 1
+#define KRKR_ARCHIVE_ZIP 2
+
+typedef struct KrkrArchive KrkrArchive;
+KrkrArchive *krkr_archive_open(const KrkrArchiveReader *reader, int kind);
+void krkr_archive_close(KrkrArchive *archive);
+
+size_t krkr_archive_count(const KrkrArchive *archive);
+size_t krkr_archive_size(const KrkrArchive *archive, size_t index);
+size_t krkr_archive_name(const KrkrArchive *archive, size_t index, char *buf, size_t len);
+size_t krkr_archive_read(KrkrArchive *archive, size_t index, void *buf, size_t len);
+
 #ifdef __cplusplus
 }
 #endif
