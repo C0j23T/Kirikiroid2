@@ -253,21 +253,15 @@ void tTJS::Release()
 void tTJS::Shutdown()
 {
 	TJSVariantArrayStackCompactNow();
-	// bevy port: drop what the argument stack still holds; see
-	// tTJSVariantArrayStack::ClearVariants.
 	if(VariantArrayStack) VariantArrayStack->ClearVariants();
 	Global->Clear();
 	if(Global) Global->Release(), Global = NULL;
 	if(Cache) delete Cache, Cache = NULL;
-	// bevy port: the global object is gone, so nothing can reach the script
-	// blocks any more; release what the reference cycles still hold.
 	ReleaseScriptBlocks();
 }
 //---------------------------------------------------------------------------
 void tTJS::ReleaseScriptBlocks()
 {
-	// bevy port: iterate over a copy; a block's destructor removes itself
-	// from ScriptBlocks.
 	std::vector<tTJSScriptBlock*> blocks(ScriptBlocks);
 	for(size_t i = 0; i < blocks.size(); i++)
 	{

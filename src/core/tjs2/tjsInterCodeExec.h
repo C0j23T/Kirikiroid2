@@ -58,9 +58,6 @@ public:
 
 	void Compact() { InternalCompact(); }
 
-	// bevy port: release every variant the stack holds (the arrays stay
-	// allocated). Variants left in frame slots keep the objects they point to
-	// alive, including function contexts of a script that is being unloaded.
 	void ClearVariants();
 
 }/* *TJSVariantArrayStack = NULL*/;

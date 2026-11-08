@@ -1270,6 +1270,7 @@ static void TVPDumpOptions();
 //---------------------------------------------------------------------------
 extern bool TVPEnableGlobalHeapCompaction;
 extern void TVPGL_SSE2_Init();
+extern void TVPBevyUnloadInternalPlugins(); // environ/bevy/BevyPlugins.cpp
 extern "C" void TVPGL_ASM_Init();
 extern bool TVPAutoSaveBookMark;
 static bool TVPHighTimerPeriod = false;
@@ -1458,6 +1459,16 @@ void TVPAfterSystemInit()
 //---------------------------------------------------------------------------
 void TVPBeforeSystemUninit()
 {
+	// Queued events hold references to the TJS objects they are addressed to,
+	// and those go away just below (TVPUninitScriptEngine). Dropping the queue
+	// first keeps a shutdown from releasing objects that no longer exist:
+	// upstream never needed it because it ends the process right after, while a
+	// host that shuts the engine down and keeps running does.
+	TVPUninitEventState();
+	// The compiled-in plugins have to be detached from the TJS classes they
+	// extended while those still exist; a later session would otherwise be
+	// told "Already registerd class" (environ/bevy/BevyPlugins.cpp).
+	TVPBevyUnloadInternalPlugins();
 	// TVPDumpHWException(); // dump cached hw exceptoin
 }
 //---------------------------------------------------------------------------

@@ -63,8 +63,6 @@ tTJSBinaryStream * TVPGetCachedArchiveHandle(void * pointer, const ttstr & name)
 	// get cached archive file handle from the pool
 	tTJSCriticalSectionHolder cs_holder(TVPArchiveHandleCacheCS);
 
-	// bevy port: the pool is rebuilt in a new session; TVPShutdownArchiveHandleCache
-	// deallocates it and may run again at the end of the next session.
 	if(!TVPArchiveHandleCacheInit)
 	{
 		// initialize the pool
@@ -203,8 +201,6 @@ static void TVPShutdownArchiveHandleCache()
 			delete TVPArchiveHandleCachePool[i].Stream;
 	}
 	delete [] TVPArchiveHandleCachePool;
-	// bevy port: forget the pool; a later session builds a new one. Without
-	// this the next shutdown would delete it a second time.
 	TVPArchiveHandleCachePool = NULL;
 	TVPArchiveHandleCacheInit = false;
 }

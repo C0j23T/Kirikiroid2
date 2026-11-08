@@ -66,12 +66,6 @@ public:
 	void AddRef();
 	void Release();
 
-	// bevy port: drop the contexts this block keeps alive (the same releases
-	// the destructor does). A block holds its top-level context, whose data
-	// area holds the function closures, whose contexts hold the block back:
-	// without this the cycle keeps the block, and through it the whole
-	// interpreter, allocated for the rest of the process. Only valid while the
-	// interpreter is being destroyed.
 	void ReleaseContexts();
 
 	void Add(tTJSInterCodeContext * cntx);
