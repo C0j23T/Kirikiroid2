@@ -149,10 +149,14 @@ bool TVPWriteDataToFile(const ttstr &filepath, const void *data, unsigned int le
 // ─── process exit ───────────────────────────────────────────────────────────
 
 void TVPExitApplication(int code) {
-    // Upstream calls exit(). Inside a host application that would kill the
-    // host, so unwind to the C ABI shim instead and let the host decide.
+    // Upstream calls exit(), which ends the process. The host has to survive
+    // that, and the engine may already have released itself (`System.exit`
+    // runs TVPSystemUninit before exiting), so the call is abandoned at the C
+    // ABI boundary instead of unwound: the frames above are left over freed
+    // engine objects and their cleanup would dereference them.
     TVPTerminated = true;
     TVPTerminateCode = code;
+    if (TVPBevyLeaveThroughExitBoundary()) return;
     throw TVPBevyExitRequest{code};
 }
 
