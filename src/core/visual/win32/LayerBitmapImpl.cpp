@@ -87,8 +87,6 @@ void TVPUninitializeFontRasterizers() {
 		delete TVPFontSystem;
 		TVPFontSystem = NULL;
 	}
-	// bevy port: let TVPInializeFontRasterizers build them again for a later
-	// session; the host may start another instance in the same process.
 	TVPFontRasterizersInit = false;
 }
 static tTVPAtExit
@@ -97,8 +95,8 @@ static tTVPAtExit
 void TVPSetFontRasterizer( tjs_int index ) {
 	if( TVPCurrentFontRasterizers != index && index >= 0 && index < FONT_RASTER_EOT ) {
 		TVPCurrentFontRasterizers = index;
-		TVPClearFontCache(); // ƒ‰ƒXƒ^ƒ‰ƒCƒU‚ªØ‚è‘Ö‚í‚éAƒLƒƒƒbƒVƒ…‚ÍƒNƒŠƒA‚µ‚Ä‚µ‚Ü‚¤
-		TVPGlobalFontStateMagic++; // ApplyFont ‚ª‘–‚é‚æ‚¤‚É‚·‚é
+		TVPClearFontCache(); // ï¿½ï¿½ï¿½Xï¿½^ï¿½ï¿½ï¿½Cï¿½Uï¿½ï¿½ï¿½Ø‚ï¿½Ö‚ï¿½éï¿½Aï¿½Lï¿½ï¿½ï¿½bï¿½Vï¿½ï¿½ï¿½ÍƒNï¿½ï¿½ï¿½Aï¿½ï¿½ï¿½Ä‚ï¿½ï¿½Ü‚ï¿½
+		TVPGlobalFontStateMagic++; // ApplyFont ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½æ‚¤ï¿½É‚ï¿½ï¿½ï¿½
 	}
 }
 tjs_int TVPGetFontRasterizer() {
@@ -420,7 +418,12 @@ tTVPBitmap::~tTVPBitmap()
 {
 	tTVPBitmapBitsAlloc::Free(Bits);
 	delete BitmapInfo;
-	if( Palette ) delete Palette;
+	// bevy port: Palette comes from new tjs_uint[DEFAULT_PALETTE_COUNT]
+	// (Allocate and the copy constructor), so it has to go back with
+	// delete[].  A scalar delete was handed an array cookie; glibc
+	// reported it as "munmap_chunk(): invalid pointer" or "corrupted
+	// double-linked list", surfacing as a crash in unrelated code.
+	if( Palette ) delete [] Palette;
 }
 //---------------------------------------------------------------------------
 tTVPBitmap::tTVPBitmap(const tTVPBitmap & r)
