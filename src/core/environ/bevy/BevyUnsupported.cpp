@@ -4,15 +4,17 @@
 //
 //  - Window / input / menus / file dialogs: owned by the Bevy host. Scripts
 //    render into BitmapLayerTreeOwner layers; the host reads their pixels.
-//  - Sound output: bevy_krkr plays audio through bevy_kira_audio. There is no
-//    second mixer in the engine core (WaveMixer.cpp/SDL is not built).
+//  - Sound output: the engine's buffers are mixed in BevySound.cpp and pulled
+//    by the host's device (WaveMixer.cpp/SDL is not built). Only the
+//    DirectSound entry points are stubbed here.
 //  - Video playback (ffmpeg/movie): not built.
-//  - BPG / JXR / PVRv3 images, ZIP / 7z archives: their libraries are not
-//    vendored in this checkout. PNG, JPEG, WEBP, TLG, BMP and XP3/TAR work.
+//  - BPG / JXR / PVRv3 images: their libraries are not vendored in this
+//    checkout. PNG, JPEG, WEBP, TLG, BMP and XP3/TAR/7z/ZIP work.
 #include "tjsCommHead.h"
 
 #include <functional>
 
+#include "DebugIntf.h"
 #include "GraphicsLoaderIntf.h"
 #include "MsgIntf.h"
 #include "PhaseVocoderDSP.h"
@@ -35,9 +37,6 @@ struct IStream;
 
 // ─── window / input / UI ────────────────────────────────────────────────────
 
-iWindowLayer *TVPCreateAndAddWindow(tTJSNI_Window *) {
-    TVPBevyUnsupported(TJS_W("Window (render into BitmapLayerTreeOwner instead)"));
-}
 
 void TVPShowPopMenu(tTJSNI_MenuItem *) {}
 
@@ -46,14 +45,20 @@ bool TVPGetJoyPadAsyncState(tjs_uint, bool) { return false; }
 
 bool TVPSelectFile(iTJSDispatch2 *) { return false; } // "cancelled"
 
+/// The "browse the patch library" button of the dialog the engine shows when
+/// `patch.tjs` fails (environ/cocos2d/AppDelegate.cpp opens a page in a
+/// browser). A host has no browser to open, so the URL goes to the log.
+void TVPOpenPatchLibUrl() {
+    TVPAddImportantLog(ttstr(TJS_W("(info) patch library: ")) +
+                       ttstr(TJS_W("https://zeas2.github.io/Kirikiroid2_patch/patch")));
+}
+
 // ─── sound output ───────────────────────────────────────────────────────────
 
+// The device itself is the host's: `TVPCreateSoundBuffer` is in BevySound.cpp,
+// which mixes the engine's buffers for the host to pull.
 void TVPInitDirectSound(int) {}
 void TVPUninitDirectSound() {}
-
-iTVPSoundBuffer *TVPCreateSoundBuffer(tTVPWaveFormat &, int) {
-    TVPBevyUnsupported(TJS_W("WaveSoundBuffer playback (use bevy_krkr's audio channels)"));
-}
 
 tTVPWaveDecoder *FFWaveDecoderCreator::Create(const ttstr &, const ttstr &) {
     return nullptr; // ffmpeg decoder not built; other decoders are tried
@@ -102,17 +107,15 @@ TVP_BEVY_NO_IMAGE(JXR, "JPEG XR")
 TVP_BEVY_NO_IMAGE(PVRv3, "PVRv3")
 
 class iTVPTexture2D;
+// Not a stub-with-message: TVPInternalLoadTexture (GraphicsLoaderIntf.cpp) calls
+// this for *every* image to try the PVRv3 fast path before falling back to the
+// bitmap loaders, and expects NULL for "this file is not PVRv3". Throwing here
+// made every PNG/TLG/WEBP image fail to load.
 iTVPTexture2D *TVPLoadPVRv3(tTJSBinaryStream *, const std::function<void(const ttstr &, const tTJSVariant &)> &) {
-    TVPBevyUnsupported(TJS_W("PVRv3 images"));
+    return nullptr;
 }
 
 void TVPSaveAsJXR(void *, tTJSBinaryStream *, const iTVPBaseBitmap *, const ttstr &, iTJSDispatch2 *) {
     TVPBevyUnsupported(TJS_W("Saving JPEG XR images"));
 }
 bool TVPAcceptSaveAsJXR(void *, const ttstr &, iTJSDispatch2 **) { return false; }
-
-// ─── archive formats without a vendored library ─────────────────────────────
-// StorageImpl tries every opener in turn; nullptr means "not this format".
-
-tTVPArchive *TVPOpenZIPArchive(const ttstr &, tTJSBinaryStream *, bool) { return nullptr; }
-tTVPArchive *TVPOpen7ZArchive(const ttstr &, tTJSBinaryStream *, bool) { return nullptr; }
