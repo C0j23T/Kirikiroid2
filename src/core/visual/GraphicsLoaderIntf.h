@@ -230,17 +230,6 @@ void TVPSaveTextureAsBMP(tTJSBinaryStream* dst, class iTVPTexture2D* bmp, const 
 void TVPSaveTextureAsBMP(const ttstr &path, class iTVPTexture2D* tex, const ttstr &mode = TJS_W(""), iTJSDispatch2* meta = nullptr);
 
 //---------------------------------------------------------------------------
-// JPEG loading handler
-//---------------------------------------------------------------------------
-enum tTVPJPEGLoadPrecision
-{
-	jlpLow,
-	jlpMedium,
-	jlpHigh
-};
-
-extern tTVPJPEGLoadPrecision TVPJPEGLoadPrecision;
-//---------------------------------------------------------------------------
 
 
 

@@ -56,6 +56,23 @@ int krkr_webp_info(const void *src, size_t srcLen, KrkrWebpInfo *info);
 // Bytes written to `dst` (width * height * 4), or SIZE_MAX.
 size_t krkr_webp_decode(const void *src, size_t srcLen, void *dst, size_t dstLen);
 
+// JPEG (visual/LoadJPEG.cpp). `gray` selects one byte per pixel instead of four.
+// 0 on success, -1 when the data is not a JPEG.
+int krkr_jpeg_info(const void *src, size_t srcLen, unsigned *width, unsigned *height);
+// Bytes written, or SIZE_MAX.
+size_t krkr_jpeg_decode(const void *src, size_t srcLen, int gray, void *dst, size_t dstLen);
+
+// Chroma subsampling for krkr_jpeg_encode.
+#define KRKR_JPEG_420 0
+#define KRKR_JPEG_422 1
+#define KRKR_JPEG_444 2
+
+// 0 on success; the file is allocated by the shim and released with
+// krkr_jpeg_free.
+int krkr_jpeg_encode(const void *pixels, size_t pixelsLen, unsigned width,
+	unsigned height, int quality, int subsampling, void **jpeg, size_t *jpegLen);
+void krkr_jpeg_free(void *jpeg, size_t jpegLen);
+
 // PNG (visual/LoadPNG.cpp). The decode target is what a row of the destination
 // bitmap holds, and the return value is the number of bytes written.
 #define KRKR_PNG_RGBA 0 // 4 bytes per pixel

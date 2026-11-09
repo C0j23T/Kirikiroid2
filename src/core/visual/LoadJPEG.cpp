@@ -7,10 +7,10 @@
 #include "tjsDictionary.h"
 #include "ScriptMgnIntf.h"
 
+#include "krkr_shim.h"
+
 #include <cstring>
 #include <vector>
-
-#include <turbojpeg.h>
 
 namespace {
 
@@ -21,11 +21,8 @@ std::vector<unsigned char> ReadAll(tTJSBinaryStream *src) {
 	return data;
 }
 
-// The error string belongs to the handle and is gone once it is destroyed.
-void ThrowJpegError(const tjs_char *message, tjhandle handle) {
-	ttstr reason( tjGetErrorStr2( handle ) );
-	tjDestroy( handle );
-	TVPThrowExceptionMessage( message, reason );
+void ThrowJpegLoadError() {
+	TVPThrowExceptionMessage(TVPJPEGLoadError, ttstr(TJS_W("invalid JPEG data")));
 }
 
 } // namespace
@@ -41,10 +38,7 @@ bool TVPAcceptSaveAsJPG(void* formatdata, const ttstr & type, class iTJSDispatch
 		tTJSVariant desc;
 		TVPExecuteExpression(
 			TJS_W("(const)%[")
-			TJS_W("\"quality\"=>(const)%[\"type\"=>\"range\",\"min\"=>1,\"max\"=>100,\"desc\"=>\"100 is high quality, 1 is low quality\",\"default\"=>90],")
-			TJS_W("\"subsampling\"=>(const)%[\"type\"=>\"select\",\"items\"=>(const)[\"4:2:0\",\"4:2:2\",\"4:4:4\"],\"desc\"=>\"subsampling\",\"default\"=>0],")
-			TJS_W("\"dct\"=>(const)%[\"type\"=>\"select\",\"items\"=>(const)[\"islow\",\"ifast\"],\"desc\"=>\"DCT method\",\"default\"=>0],")
-			TJS_W("\"progressive\"=>(const)%[\"type\"=>\"boolean\",\"desc\"=>\"progressive encoding\",\"default\"=>true]")
+			TJS_W("\"quality\"=>(const)%[\"type\"=>\"range\",\"min\"=>1,\"max\"=>100,\"desc\"=>\"100 is high quality, 1 is low quality\",\"default\"=>90]")
 			TJS_W("]"),
 			NULL, &desc );
 		if( desc.Type() == tvtObject ) {
@@ -53,8 +47,6 @@ bool TVPAcceptSaveAsJPG(void* formatdata, const ttstr & type, class iTJSDispatch
 	}
 	return result;
 }
-
-tTVPJPEGLoadPrecision TVPJPEGLoadPrecision = jlpMedium;
 
 void TVPLoadJPEG(void* formatdata, void *callbackdata, tTVPGraphicSizeCallback sizecallback,
 	tTVPGraphicScanLineCallback scanlinecallback, tTVPMetaInfoPushCallback metainfopushcallback,
@@ -66,65 +58,47 @@ void TVPLoadJPEG(void* formatdata, void *callbackdata, tTVPGraphicSizeCallback s
 
 	std::vector<unsigned char> jpeg = ReadAll(src);
 
-	int width, height, subsamp;
-	tjhandle decompressor = tjInitDecompress();
-	if( !decompressor ) TVPThrowExceptionMessage(TVPInsufficientMemory);
-	if( tjDecompressHeader2( decompressor, jpeg.data(), jpeg.size(), &width, &height, &subsamp ) != 0 )
-		ThrowJpegError(TVPJPEGLoadError, decompressor);
+	unsigned width, height;
+	if( krkr_jpeg_info(jpeg.data(), jpeg.size(), &width, &height) != 0 )
+		ThrowJpegLoadError();
 
 	const bool grayscale = mode == glmGrayscale;
-	const int components = grayscale ? 1 : 4;
+	const size_t row_bytes = (size_t)width * (grayscale ? 1 : 4);
 	sizecallback(callbackdata, width, height, gpfRGB);
 
-	int flags = TJFLAG_FASTDCT;
-	switch(TVPJPEGLoadPrecision)
-	{
-	case jlpLow:  flags = TJFLAG_FASTDCT|TJFLAG_FASTUPSAMPLE; break;
-	case jlpHigh: flags = TJFLAG_ACCURATEDCT; break;
-	}
+	std::vector<unsigned char> pixels(row_bytes * height);
+	if( krkr_jpeg_decode(jpeg.data(), jpeg.size(), grayscale,
+			pixels.data(), pixels.size()) != pixels.size() )
+		ThrowJpegLoadError();
 
-	std::vector<unsigned char> pixels((size_t)width * height * components);
-	if( tjDecompress2( decompressor, jpeg.data(), jpeg.size(), pixels.data(), width,
-			width * components, height, grayscale ? TJPF_GRAY : TJPF_RGBA, flags ) != 0 )
-		ThrowJpegError(TVPJPEGLoadError, decompressor);
-	tjDestroy( decompressor );
-
-	for( int y = 0; y < height; y++ ) {
+	for( unsigned y = 0; y < height; y++ ) {
 		void *scanline = scanlinecallback(callbackdata, y);
 		if(!scanline) break;
-		memcpy( scanline, pixels.data() + (size_t)y * width * components, (size_t)width * components );
+		memcpy(scanline, pixels.data() + (size_t)y * row_bytes, row_bytes);
 		scanlinecallback(callbackdata, -1);
 	}
 }
 
-struct tTVPJPGOption
-{
-	tjs_uint quality;
-	int subsampling;
-	bool fast_dct;
-	bool progressive;
-};
-
 void TVPSaveAsJPG(void* formatdata, tTJSBinaryStream* dst, const iTVPBaseBitmap* image, const ttstr & mode, iTJSDispatch2* meta )
 {
-	tTVPJPGOption opt = { 90, 0, false, true };
+	tjs_uint quality = 90;
 	if( mode.StartsWith(TJS_W("jpg")) && mode.length() > 3 ) {
-		opt.quality = 0;
+		quality = 0;
 		for( tjs_int len = 3; len < mode.length(); len++ ) {
 			tjs_char c = mode[len];
 			if( c >= TJS_W('0') && c <= TJS_W('9') ) {
-				opt.quality *= 10;
-				opt.quality += c-TJS_W('0');
+				quality *= 10;
+				quality += c-TJS_W('0');
 			}
 		}
-		if( opt.quality <= 0 ) opt.quality = 10;
-		if( opt.quality > 100 ) opt.quality = 100;
+		if( quality <= 0 ) quality = 10;
+		if( quality > 100 ) quality = 100;
 	}
 
 	{
 		struct MetaDictionaryEnumCallback : public tTJSDispatch {
-			tTVPJPGOption *opt_;
-			MetaDictionaryEnumCallback( tTVPJPGOption *opt ) : opt_(opt) {}
+			tjs_uint *quality_;
+			MetaDictionaryEnumCallback( tjs_uint *quality ) : quality_(quality) {}
 			tjs_error TJS_INTF_METHOD FuncCall(tjs_uint32 flag, const tjs_char * membername,
 				tjs_uint32 *hint, tTJSVariant *result, tjs_int numparams,
 				tTJSVariant **param, iTJSDispatch2 *objthis) {
@@ -138,22 +112,14 @@ void TVPSaveAsJPG(void* formatdata, tTJSBinaryStream* dst, const iTVPBaseBitmap*
 				if( value == TJS_W("quality") ) {
 					tjs_int64 v = param[2]->AsInteger();
 					v = v < 1 ? 1 : v > 100 ? 100 : v;
-					opt_->quality = (tjs_uint)v;
-				} else if( value == TJS_W("subsampling") ) {
-					tjs_int64 v = param[2]->AsInteger();
-					v = v < 0 ? 0 : v > 2 ? 2 : v;
-					opt_->subsampling = (int)v;
-				} else if( value == TJS_W("dct") ) {
-					opt_->fast_dct = param[2]->AsInteger() != 0;
-				} else if( value == TJS_W("progressive") ) {
-					opt_->progressive = param[2]->AsInteger() != 0;
+					*quality_ = (tjs_uint)v;
 				}
 				if(result) *result = (tjs_int)1;
 				return TJS_S_OK;
 			}
-		} callback( &opt );
+		} callback( &quality );
 		tTJSVariantClosure clo(&callback, NULL);
-		meta->EnumMembers(TJS_IGNOREPROP, &clo, meta);
+		if(meta) meta->EnumMembers(TJS_IGNOREPROP, &clo, meta);
 	}
 
 	const tjs_uint width = image->GetWidth();
@@ -162,33 +128,36 @@ void TVPSaveAsJPG(void* formatdata, tTJSBinaryStream* dst, const iTVPBaseBitmap*
 
 	TVPClearGraphicCache();
 
-	static const int subsampling[] = { TJSAMP_420, TJSAMP_422, TJSAMP_444 };
-	int flags = opt.fast_dct ? TJFLAG_FASTDCT : TJFLAG_ACCURATEDCT;
-	if( opt.progressive ) flags |= TJFLAG_PROGRESSIVE;
+	const size_t row_bytes = (size_t)width * 4;
+	std::vector<unsigned char> pixels(row_bytes * height);
+	for( tjs_uint y = 0; y < height; y++ )
+		memcpy(&pixels[(size_t)y * row_bytes], image->GetScanLine(y), row_bytes);
 
-	unsigned char *jpeg = NULL;
-	unsigned long jpegSize = 0;
-	tjhandle compressor = tjInitCompress();
-	if( !compressor ) TVPThrowExceptionMessage(TVPInsufficientMemory);
-	if( tjCompress2( compressor, (const unsigned char*)image->GetScanLine(0), width,
-			image->GetPitchBytes(), height, TJPF_RGBX, &jpeg, &jpegSize,
-			subsampling[opt.subsampling], opt.quality, flags ) != 0 )
-		ThrowJpegError(TVPCompressionFailed, compressor);
-	tjDestroy( compressor );
-	dst->WriteBuffer( jpeg, (tjs_uint)jpegSize );
-	tjFree( jpeg );
+	void *jpeg = NULL;
+	size_t jpeg_size = 0;
+	// TODO: the shim can also write 4:2:2 and 4:4:4, and the engine used to
+	// let a script pick that and progressive coding; add the options back to
+	// the descriptor above if a game saves screenshots that need them.
+	if( krkr_jpeg_encode(pixels.data(), pixels.size(), width, height,
+			(int)quality, KRKR_JPEG_420, &jpeg, &jpeg_size) != 0 )
+		TVPThrowExceptionMessage(TVPCompressionFailed);
+
+	try {
+		dst->WriteBuffer(jpeg, (tjs_uint)jpeg_size);
+	} catch(...) {
+		krkr_jpeg_free(jpeg, jpeg_size);
+		throw;
+	}
+	krkr_jpeg_free(jpeg, jpeg_size);
 }
 
 void TVPLoadHeaderJPG(void* formatdata, tTJSBinaryStream *src, iTJSDispatch2** dic )
 {
 	std::vector<unsigned char> jpeg = ReadAll(src);
 
-	int width, height, subsamp, colorspace;
-	tjhandle decompressor = tjInitDecompress();
-	if( !decompressor ) TVPThrowExceptionMessage(TVPInsufficientMemory);
-	if( tjDecompressHeader3( decompressor, jpeg.data(), jpeg.size(), &width, &height, &subsamp, &colorspace ) != 0 )
-		ThrowJpegError(TVPJPEGLoadError, decompressor);
-	tjDestroy( decompressor );
+	unsigned width, height;
+	if( krkr_jpeg_info(jpeg.data(), jpeg.size(), &width, &height) != 0 )
+		ThrowJpegLoadError();
 
 	*dic = TJSCreateDictionaryObject();
 	tTJSVariant val((tjs_int64)width);

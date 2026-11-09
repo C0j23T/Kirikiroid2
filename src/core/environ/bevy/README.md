@@ -18,7 +18,7 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | `BevyScene.cpp` | Layer order, clipping, group opacity and transition commands |
 | `BevyWindowLayer.cpp` | the platform half of the `Window` class (`visual/win32/WindowImpl.cpp`'s `TTVPWindowForm` / cocos2d's `TVPWindowLayer`): the host owns display and posts input to the script window |
 | `BevyPlugins.cpp` + `plugins/` | `tTVPApplication::StartApplication`'s plugin loading (`TVPLoadPluigins`): collects the ncbind plugins compiled into the engine so that a script's `Plugins.link` can attach them, and attaches the ones a game expects to find already there (`xp3filter`, and `Scripts.foreach` / `Scripts.getObjectKeys` from `plugins/ScriptsExt.cpp`, the KAGParserEx.dll replacement). Which plugins exist is `PLUGINS` in bevy_krkr's `codegen/src/port.rs`; the wrapper translation units that keep them in the link are generated from it |
-| `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, and Opus unless krkr_sys is built without its `opus` feature) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
+| `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, and Opus when built with the `opus` feature) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, video, BPG/JXR/PVR images. They fail with a clear message. |
 | `BevyFileUtils.cpp` + `compat/platform/CCFileUtils.h` | the subset of cocos2d::FileUtils the core uses |
 | `WEBPLoader.cpp` | `visual/LoadWEBP.cpp`: `.webp` images are decoded by `krkr_shim` (`image-webp`) through `krkr_webp_*`, so libwebp is not linked |
@@ -39,6 +39,10 @@ Changes to upstream files:
   no infinite recursion without locale files;
 - `visual/LoadPNG.cpp`: PNG is decoded and encoded by `krkr_shim` (the `png`
   crate) through `krkr_png_*`, so libpng is not linked;
+- `visual/LoadJPEG.cpp`: JPEG is decoded and encoded by `krkr_shim`
+  (`zune-jpeg`, `image`) through `krkr_jpeg_*`, so libjpeg-turbo is not linked.
+  The `-jpegdec` option that picked a DCT method went with it, as did the
+  `subsampling`/`dct`/`progressive` save options;
 - `base/XP3Archive.cpp`, `base/TextStream.cpp`, `msg/win32/OptionsDesc.cpp`,
   `base/win32/PluginImpl.cpp`: zlib's one-shot calls go through
   `krkr_zlib_*` (`miniz_oxide`), so zlib is not linked. The compressed text
