@@ -1,31 +1,8 @@
 #include "GlobalConfigManager.h"
-#include "tinyxml2/tinyxml2.h"
+#include "ConfigFiles.h"
 #include "platform/CCFileUtils.h"
 #include "Platform.h"
-#include "UtilStreams.h"
 #include "LocaleConfigManager.h"
-
-bool TVPWriteDataToFile(const ttstr &filepath, const void *data, unsigned int len);
-class XMLMemPrinter : public tinyxml2::XMLPrinter {
-	tTVPMemoryStream _stream;
-	char _buffer[4096];
-public:
-	virtual void Print(const char* format, ...) override {
-		va_list param;
-		va_start(param, format);
-		int n = vsnprintf(_buffer, 4096, format, param);
-		va_end(param);
-		_stream.Write(_buffer, n);
-	}
-	void SaveFile(const std::string &path) {
-		if (!TVPWriteDataToFile(path, _stream.GetInternalBuffer(), _stream.GetSize())) {
-			TVPShowSimpleMessageBox(
-				LocaleConfigManager::GetInstance()->GetText("cannot_create_preference"),
-				LocaleConfigManager::GetInstance()->GetText("readonly_storage"));
-		}
-	}
-};
-
 
 GlobalConfigManager::GlobalConfigManager() {
 	Initialize();
@@ -39,77 +16,27 @@ GlobalConfigManager* GlobalConfigManager::GetInstance() {
 void iSysConfigManager::Initialize() {
 	AllConfig.clear();
 	ConfigUpdated = false;
-
-	tinyxml2::XMLDocument doc;
-
-	FILE *fp = nullptr;
-#ifdef _MSC_VER
-	fp = _wfopen(ttstr(GetFilePath()).c_str(), TJS_W("rb"));
-#else
-	fp = fopen(GetFilePath().c_str(), "rb");
-#endif
-
-	if (fp && !doc.LoadFile(fp)) {
-		tinyxml2::XMLElement *rootElement = doc.RootElement();
-		if (rootElement) {
-			for (tinyxml2::XMLElement *item = rootElement->FirstChildElement("Item"); item; item = item->NextSiblingElement("Item")) {
-				const char *key = item->Attribute("key");
-				const char *val = item->Attribute("value");
-				if (key && val) {
-					AllConfig[key] = val;
-				}
-			}
-			for (tinyxml2::XMLElement *item = rootElement->FirstChildElement("Custom"); item; item = item->NextSiblingElement("Custom")) {
-				const char *key = item->Attribute("key");
-				const char *val = item->Attribute("value");
-				if (key && val) {
-					CustomArguments.emplace_back(key, val);
-				}
-			}
-			for (tinyxml2::XMLElement *item = rootElement->FirstChildElement("KeyMap"); item; item = item->NextSiblingElement("KeyMap")) {
-				int key, val;
-				if (tinyxml2::XML_SUCCESS == item->QueryIntAttribute("key", &key) &&
-					tinyxml2::XML_SUCCESS == item->QueryIntAttribute("value", &val) &&
-					key && val) {
-					KeyMap.emplace(key, val);
-				}
-			}
-		}
-	}
-	if (fp) fclose(fp);
+	Config::Entries entries = Config::LoadPreference(GetFilePath());
+	for (const auto &item : entries.Items) AllConfig[item.first] = item.second;
+	CustomArguments = std::move(entries.CustomArguments);
+	KeyMap.insert(entries.KeyMap.begin(), entries.KeyMap.end());
 }
 
 void iSysConfigManager::SaveToFile() {
 	if (!ConfigUpdated) return;
 	std::string filepath = GetFilePath();
 	if (filepath.empty()) return;
-	tinyxml2::XMLDocument doc;
-	doc.LinkEndChild(doc.NewDeclaration());
-	tinyxml2::XMLElement *rootElement = doc.NewElement("GlobalPreference");
-	for (auto it = AllConfig.begin(); it != AllConfig.end(); ++it) {
-		tinyxml2::XMLElement *item = doc.NewElement("Item");
-		item->SetAttribute("key", it->first.c_str());
-		item->SetAttribute("value", it->second.c_str());
-		rootElement->LinkEndChild(item);
+	Config::Entries entries;
+	entries.Items.assign(AllConfig.begin(), AllConfig.end());
+	entries.CustomArguments = CustomArguments;
+	for (const auto &key : KeyMap) {
+		if (key.first && key.second) entries.KeyMap.emplace_back(key.first, key.second);
 	}
-	for (auto it = CustomArguments.begin(); it != CustomArguments.end(); ++it) {
-		tinyxml2::XMLElement *item = doc.NewElement("Custom");
-		item->SetAttribute("key", it->first.c_str());
-		item->SetAttribute("value", it->second.c_str());
-		rootElement->LinkEndChild(item);
+	if (!Config::SavePreference(filepath, entries)) {
+		TVPShowSimpleMessageBox(
+			LocaleConfigManager::GetInstance()->GetText("cannot_create_preference"),
+			LocaleConfigManager::GetInstance()->GetText("readonly_storage"));
 	}
-	for (auto &it : KeyMap) {
-		if (it.first && it.second) {
-			tinyxml2::XMLElement *item = doc.NewElement("KeyMap");
-			item->SetAttribute("key", it.first);
-			item->SetAttribute("value", it.second);
-			rootElement->LinkEndChild(item);
-		}
-	}
-	doc.LinkEndChild(rootElement);
-	XMLMemPrinter stream;
-	doc.Print(&stream);
-	stream.SaveFile(GetFilePath());
 	ConfigUpdated = false;
 }
 

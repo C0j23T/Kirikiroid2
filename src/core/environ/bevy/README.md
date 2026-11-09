@@ -13,7 +13,7 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | File | Replaces |
 |---|---|
 | `BevyPlatform.h/.cpp` | Linux versions of environ/android, environ/cocos2d/MainScene and environ/win32/Platform functions (log, screen size, files, tick count, dialogs, exit) |
-| `BevyArchives.cpp` | the vendored 7-Zip (`base/7zArchive.cpp`) and minizip (`base/ZIPArchive.cpp`) archives, which are not part of the open-source release: 7z and ZIP are read by `krkr_shim`'s Rust reader (`sevenz-rust2` / `zip`) through the `krkr_archive_*` C ABI |
+| `Archives.cpp` | the vendored 7-Zip (`base/7zArchive.cpp`) and minizip (`base/ZIPArchive.cpp`) archives, which are not part of the open-source release: `krkr_shim` (`sevenz-rust2` / `zip`) parses them and reports the entry list through `krkr_archive_open`'s visitor, the engine then reads entries with `krkr_archive_read` |
 | `BevyRender.cpp` | Texture handles and command dispatch to the host GPU |
 | `BevyScene.cpp` | Layer order, clipping, group opacity and transition commands |
 | `BevyWindowLayer.cpp` | the platform half of the `Window` class (`visual/win32/WindowImpl.cpp`'s `TTVPWindowForm` / cocos2d's `TVPWindowLayer`): the host owns display and posts input to the script window |
@@ -21,9 +21,11 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, Opus) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, video, BPG/JXR/PVR images. They fail with a clear message. |
 | `BevyFileUtils.cpp` + `compat/platform/CCFileUtils.h` | the subset of cocos2d::FileUtils the core uses |
+| `WEBPLoader.cpp` | `visual/LoadWEBP.cpp`: `.webp` images are decoded by `krkr_shim` (`image-webp`) through `krkr_webp_*`, so libwebp is not linked |
+| `ConfigFiles.h` | tinyxml2 for the preference and locale files (`environ/ConfigManager`): `krkr_shim` (`quick-xml`) parses and writes them, file I/O included, through `krkr_preference_*` / `krkr_locale_*` |
 | `compat/` | headers of cocos2d-x and of files missing from the open-source release (`Protect.h`, `tvpgl_route.h`, `aligned_allocator.h`), forwarding headers to system libraries, and `krkr_shim.h` |
 
-Changes to upstream files (all marked `bevy port`):
+Changes to upstream files:
 
 - `tjs2/tjsConfig.cpp`: system headers moved out of `namespace TJS`; `va_copy`
   in `_vsnprintf` (`(va_list *)&ap` is wrong on x86-64); element/byte count in `pad()`.
@@ -34,7 +36,7 @@ Changes to upstream files (all marked `bevy port`):
   dereferenced it, so any file whose format no opener accepts (an archive
   format the build does not have, a corrupt archive) crashed the engine.
 - `environ/ConfigManager/LocaleConfigManager.cpp`: cocos UI helpers compiled out;
-  no infinite recursion without locale files; public tinyxml2 API.
+  no infinite recursion without locale files;
 - `base/win32/SysInitImpl.cpp`: `TVPBeforeSystemUninit` drops the queued events
   and detaches the compiled-in plugins. Both hold references to TJS objects and
   have to be released while those still exist; upstream ends the process right

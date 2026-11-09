@@ -1,7 +1,7 @@
 #include "LocaleConfigManager.h"
+#include "ConfigFiles.h"
 #include "CCFileUtils.h"
 #include "GlobalConfigManager.h"
-#include "tinyxml2/tinyxml2.h"
 #ifndef KRKR_BEVY_PORT // bevy port: no cocos2d UI widgets
 #include "ui/UIText.h"
 #include "ui/UIButton.h"
@@ -44,29 +44,8 @@ void LocaleConfigManager::Initialize(const std::string &sysLang) {
 	// override by global configured lang
 	currentLangCode = GlobalConfigManager::GetInstance()->GetValue<std::string>("user_language", "");
 	if (currentLangCode.empty()) currentLangCode = sysLang;
-	AllConfig.clear();
-	tinyxml2::XMLDocument doc;
 	std::string xmlData = cocos2d::FileUtils::getInstance()->getStringFromFile(GetFilePath());
-#ifdef KRKR_BEVY_PORT
-	// bevy port: ParseDeep is internal in upstream tinyxml2 (the system copy);
-	// Parse() is the public equivalent and also skips the BOM.
-	doc.Parse(xmlData.c_str(), xmlData.size());
-#else
-	bool _writeBOM = false;
-	const char* p = xmlData.c_str();
-	p = tinyxml2::XMLUtil::ReadBOM(p, &_writeBOM);
-	doc.ParseDeep((char*)p, nullptr);
-#endif
-	tinyxml2::XMLElement *rootElement = doc.RootElement();
-	if (rootElement) {
-		for (tinyxml2::XMLElement *item = rootElement->FirstChildElement(); item; item = item->NextSiblingElement()) {
-			const char *key = item->Attribute("id");
-			const char *val = item->Attribute("text");
-			if (key && val) {
-				AllConfig[key] = val;
-			}
-		}
-	}
+	AllConfig = Config::LoadLocale(xmlData);
 }
 
 #ifndef KRKR_BEVY_PORT // bevy port: no cocos2d UI widgets

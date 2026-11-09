@@ -1,4 +1,4 @@
-// bevy port: 7z / ZIP archive support.
+// 7z / ZIP archives, parsed by krkr_shim (crates/krkr_shim/src/archives.rs).
 #include "tjsCommHead.h"
 
 #include <algorithm>
@@ -44,54 +44,47 @@ ttstr PathFromUtf8(const char *path, tjs_uint len) {
 	return name;
 }
 
-class BevyArchive : public tTVPArchive {
-	struct Entry {
-		ttstr Name;
-		tjs_uint Index; // position in the archive's own entry list
-	};
+struct Entry {
+	ttstr Name;
+	size_t Index; // position in the archive's own entry list
+	size_t Size;
+};
 
+void collect_entry(void *userdata, size_t index, const char *name, size_t size) {
+	auto *entries = static_cast<std::vector<Entry> *>(userdata);
+	entries->push_back(Entry{PathFromUtf8(name, (tjs_uint)strlen(name)), index, size});
+}
+
+class Archive : public tTVPArchive {
 	StreamSource Source;
 	KrkrArchive *Arc = nullptr;
 	std::vector<Entry> Entries;
 	bool OwnsStream = false;
 
 public:
-	BevyArchive(const ttstr &name, tTJSBinaryStream *stream) : tTVPArchive(name) {
+	Archive(const ttstr &name, tTJSBinaryStream *stream) : tTVPArchive(name) {
 		Source.Stream = stream;
 	}
-	~BevyArchive() override {
+	~Archive() override {
 		Close();
 		if (OwnsStream) delete Source.Stream;
 	}
 
 	bool Open(int kind, bool normalizeFileName) {
-		KrkrArchiveReader reader;
-		reader.userdata = &Source;
-		reader.read = read_callback;
-		reader.seek = seek_callback;
-		reader.size = (long long)Source.Stream->GetSize();
-		Arc = krkr_archive_open(&reader, kind);
+		KrkrStream stream;
+		stream.userdata = &Source;
+		stream.read = read_callback;
+		stream.seek = seek_callback;
+		stream.size = (long long)Source.Stream->GetSize();
+		KrkrArchiveEntries entries;
+		entries.userdata = &Entries;
+		entries.entry = collect_entry;
+		Arc = krkr_archive_open(&stream, kind, &entries);
 		if (!Arc) return false;
-
-		tjs_uint count = (tjs_uint)krkr_archive_count(Arc);
-		Entries.reserve(count);
-		std::vector<char> name;
-		for (tjs_uint i = 0; i < count; ++i) {
-			size_t len = krkr_archive_name(Arc, i, nullptr, 0);
-			if (len == (size_t)-1) continue;
-			name.resize(len + 1);
-			krkr_archive_name(Arc, i, name.data(), name.size());
-			ttstr storageName = PathFromUtf8(name.data(), (tjs_uint)len);
-			if (normalizeFileName) NormalizeInArchiveStorageName(storageName);
-			Entries.push_back(Entry{storageName, i});
-		}
 		if (normalizeFileName) {
+			for (Entry &entry : Entries) NormalizeInArchiveStorageName(entry.Name);
 			std::stable_sort(Entries.begin(), Entries.end(),
 				[](const Entry &a, const Entry &b) { return a.Name < b.Name; });
-		}
-		if (Entries.empty()) {
-			Close();
-			return false;
 		}
 		OwnsStream = true;
 		return true;
@@ -102,14 +95,12 @@ public:
 
 	tTJSBinaryStream *CreateStreamByIndex(tjs_uint idx) override {
 		if (!Arc || idx >= Entries.size()) return nullptr;
-		tjs_uint index = Entries[idx].Index;
-		size_t size = krkr_archive_size(Arc, index);
-		if (size == (size_t)-1) return nullptr;
+		const Entry &entry = Entries[idx];
 		std::unique_ptr<tTVPMemoryStream> stream(new tTVPMemoryStream());
-		if (size > 0) {
-			stream->SetSize((tjs_uint)size);
-			size_t done = krkr_archive_read(Arc, index, stream->GetInternalBuffer(), size);
-			if (done != size) return nullptr;
+		if (entry.Size > 0) {
+			stream->SetSize((tjs_uint)entry.Size);
+			size_t done = krkr_archive_read(Arc, entry.Index, stream->GetInternalBuffer(), entry.Size);
+			if (done != entry.Size) return nullptr;
 		}
 		return stream.release();
 	}
@@ -123,7 +114,7 @@ private:
 	}
 };
 
-tTVPArchive *OpenWithShim(const ttstr &name, tTJSBinaryStream *stream, bool normalizeFileName,
+tTVPArchive *OpenArchive(const ttstr &name, tTJSBinaryStream *stream, bool normalizeFileName,
 	int kind, const uint8_t *signature, size_t signature_len) {
 	tjs_uint64 pos = stream->GetPosition();
 	std::vector<uint8_t> head(signature_len);
@@ -132,7 +123,7 @@ tTVPArchive *OpenWithShim(const ttstr &name, tTJSBinaryStream *stream, bool norm
 	if (read != signature_len || std::memcmp(head.data(), signature, signature_len) != 0) {
 		return nullptr;
 	}
-	BevyArchive *arc = new BevyArchive(name, stream);
+	Archive *arc = new Archive(name, stream);
 	if (!arc->Open(kind, normalizeFileName)) {
 		delete arc;
 		return nullptr;
@@ -144,10 +135,10 @@ tTVPArchive *OpenWithShim(const ttstr &name, tTJSBinaryStream *stream, bool norm
 
 tTVPArchive *TVPOpen7ZArchive(const ttstr &name, tTJSBinaryStream *st, bool normalizeFileName) {
 	static const uint8_t k7zSignature[] = {0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c};
-	return OpenWithShim(name, st, normalizeFileName, KRKR_ARCHIVE_7Z, k7zSignature, sizeof(k7zSignature));
+	return OpenArchive(name, st, normalizeFileName, KRKR_ARCHIVE_7Z, k7zSignature, sizeof(k7zSignature));
 }
 
 tTVPArchive *TVPOpenZIPArchive(const ttstr &name, tTJSBinaryStream *st, bool normalizeFileName) {
 	static const uint8_t kZipSignature[] = {0x50, 0x4b, 0x03, 0x04};
-	return OpenWithShim(name, st, normalizeFileName, KRKR_ARCHIVE_ZIP, kZipSignature, sizeof(kZipSignature));
+	return OpenArchive(name, st, normalizeFileName, KRKR_ARCHIVE_ZIP, kZipSignature, sizeof(kZipSignature));
 }
