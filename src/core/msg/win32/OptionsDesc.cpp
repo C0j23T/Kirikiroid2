@@ -11,7 +11,7 @@
 #include "tjsCommHead.h"
 
 #include "MsgIntf.h"
-#include <zlib.h>
+#include "krkr_shim.h"
 
 /* option description string (compressed) */
 
@@ -483,11 +483,9 @@ ttstr TVPGetCommandDesc()
 
 	try
 	{
-		unsigned long dest_size = decompressed_size;
-
-		int result = uncompress(dest, &dest_size,
-			(unsigned char*)compressed_option_desc_string, compressed_size);
-		if(result != Z_OK || dest_size != decompressed_size) { TVPThrowInternalError; }
+		if( krkr_zlib_uncompress(dest, decompressed_size,
+				compressed_option_desc_string, compressed_size) != decompressed_size )
+			TVPThrowInternalError;
 
 		dest[decompressed_size] = 0;
 

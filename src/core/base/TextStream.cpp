@@ -10,7 +10,7 @@
 //---------------------------------------------------------------------------
 #include "tjsCommHead.h"
 
-#include <zlib.h>
+#include "krkr_shim.h"
 #include "TextStream.h"
 #include "MsgIntf.h"
 #include "DebugIntf.h"
@@ -18,6 +18,9 @@
 #include "UtilStreams.h"
 #include "tjsError.h"
 #include "CharacterSet.h"
+
+#include <cstdint>
+#include <vector>
 
 extern "C" int sjis_mbtowc(unsigned short *wc, const unsigned char *s);
 extern "C" int gbk_mbtowc(unsigned short *wc, const unsigned char *s);
@@ -241,21 +244,14 @@ public:
 						uncompressed != (unsigned long)uncompressed)
 						TVPThrowExceptionMessage(TVPUnsupportedCipherMode, name);
 							// too large stream
-					unsigned long destlen ;
 					tjs_uint8 *nbuf = new tjs_uint8[(unsigned long)compressed + 1];
 					try
 					{
 						Stream->ReadBuffer(nbuf, (unsigned long)compressed);
-						Buffer = new tjs_char [ (BufferLen = (destlen =
-								(unsigned long)uncompressed) / 2) + 1];
-						int result = uncompress( /* uncompress from zlib */
-							(unsigned char*)Buffer,
-							&destlen, (unsigned char*)nbuf,
-							(unsigned long)compressed);
-						if(result != Z_OK ||
-							destlen != (unsigned long)uncompressed)
-								TVPThrowExceptionMessage(TVPUnsupportedCipherMode, name);
-							// uncompression failed.
+						Buffer = new tjs_char [ (BufferLen = (unsigned long)uncompressed / 2) + 1];
+						if( krkr_zlib_uncompress(Buffer, (unsigned long)uncompressed,
+								nbuf, (unsigned long)compressed) != (unsigned long)uncompressed )
+							TVPThrowExceptionMessage(TVPUnsupportedCipherMode, name);
 					}
 					catch(...)
 					{
@@ -459,20 +455,16 @@ class tTVPTextWriteStream : public iTJSTextWriteStream
 	// TODO: 32bit wchar_t support
 
 
-        static const tjs_uint COMPRESSION_BUFFER_SIZE = 1024 * 1024;
-
 	tTJSBinaryStream * Stream;
 	tjs_int CryptMode;
 		// -1 for no-crypt
 		// 0: (unused)	(old buggy crypt mode)
 		// 1: simple crypt
 		// 2: complessed
-    int CompressionLevel; // compression level of zlib
+    int CompressionLevel; // zlib level, 0 to 9
 
-	z_stream_s *ZStream;
+	std::vector<tjs_uint8> Pending; // text held back until the stream closes
 	tjs_uint CompressionSizePosition;
-	tjs_nchar *CompressionBuffer;
-	bool CompressionFailed;
 
 public:
 	tTVPTextWriteStream(const ttstr & name, const ttstr &modestr)
@@ -484,11 +476,8 @@ public:
 		// oN: write from binary offset N (in bytes)
 		Stream = NULL;
 		CryptMode = -1;
-		CompressionLevel = Z_DEFAULT_COMPRESSION;
-		ZStream = NULL;
+		CompressionLevel = 6;
 		CompressionSizePosition = 0;
-		CompressionBuffer = NULL;
-		CompressionFailed = false;
 
 		// check c/z mode
 		const tjs_char *p;
@@ -553,24 +542,7 @@ public:
 
 		if(CryptMode == 2)
 		{
-			// allocate and initialize zlib straem
-			ZStream = new z_stream_s();
-			ZStream->zalloc = Z_NULL;
-			ZStream->zfree = Z_NULL;
-			ZStream->opaque = Z_NULL;
-			if (deflateInit(ZStream, CompressionLevel) != Z_OK) {
-				CompressionFailed = true;
-				TVPThrowExceptionMessage(TVPCompressionFailed);
-			}
-
-			CompressionBuffer = new tjs_nchar[COMPRESSION_BUFFER_SIZE];
-
-			ZStream->next_in = NULL;
-			ZStream->avail_in = 0;
-			ZStream->next_out = reinterpret_cast<Bytef*>( CompressionBuffer );
-			ZStream->avail_out = COMPRESSION_BUFFER_SIZE;
-
-			// Compression Size (write dummy)
+			// Compressed size and uncompressed size, both filled in on close.
 			CompressionSizePosition = static_cast<tjs_uint>(Stream->GetPosition());
 			WriteI64LE((tjs_uint64)0);
 			WriteI64LE((tjs_uint64)0);
@@ -581,45 +553,23 @@ public:
 	{
 		if(CryptMode == 2)
 		{
+			try {
+				std::vector<tjs_uint8> compressed(krkr_zlib_bound(Pending.size()));
+				const size_t size = krkr_zlib_compress(compressed.data(), compressed.size(),
+					Pending.data(), Pending.size(), CompressionLevel);
+				if (size == SIZE_MAX) TVPThrowExceptionMessage(TVPCompressionFailed);
 
-			if (! CompressionFailed) {
-				try {
-					// close zlib stream
-					int result = 0;
-					do {
-						result = deflate(ZStream, Z_FINISH);
-						if (result != Z_OK
-						    && result != Z_STREAM_END) {
-							TVPThrowExceptionMessage(TVPCompressionFailed);
-						}
-						Stream->WriteBuffer(CompressionBuffer, COMPRESSION_BUFFER_SIZE - ZStream->avail_out);
-						ZStream->next_out = reinterpret_cast<Bytef*>( CompressionBuffer );
-						ZStream->avail_out = COMPRESSION_BUFFER_SIZE;
-					} while (result != Z_STREAM_END);
+				Stream->WriteBuffer(compressed.data(), (tjs_uint)size);
 
-					// rollback and write compression size.
-					Stream->SetPosition(CompressionSizePosition);
-					WriteI64LE((tjs_uint64)ZStream->total_out);
-					WriteI64LE((tjs_uint64)ZStream->total_in);
-				}
-				catch(...) {
-					// delete zlib compress stream
-					if (ZStream) {
-						deflateEnd(ZStream);
-						delete ZStream;
-					}
-					delete[] CompressionBuffer;
-					delete Stream;
-					throw;
-				}
+				Stream->SetPosition(CompressionSizePosition);
+				WriteI64LE((tjs_uint64)size);
+				WriteI64LE((tjs_uint64)Pending.size());
 			}
-			// delete zlib compress stream
-			if (ZStream) {
-				deflateEnd(ZStream);
-				delete ZStream;
+			catch(...) {
+				delete Stream;
+				Stream = NULL;
+				throw;
 			}
-			delete[] CompressionBuffer;
-
 		}
 
 		if(Stream) delete Stream;
@@ -727,22 +677,8 @@ public:
 	{
 		if(CryptMode == 2)
 		{
-			// compressed with zlib stream.
-			ZStream->next_in = (Bytef*)ptr;
-			ZStream->avail_in = (uInt)size;
-
-			while (ZStream->avail_in > 0) {
-				int result = deflate(ZStream, Z_NO_FLUSH);
-				if (result != Z_OK) {
-					CompressionFailed = true;
-					TVPThrowExceptionMessage(TVPCompressionFailed);
-				}
-				if (ZStream->avail_out == 0) {
-					Stream->WriteBuffer(CompressionBuffer, COMPRESSION_BUFFER_SIZE);
-					ZStream->next_out = reinterpret_cast<Bytef*>( CompressionBuffer );
-					ZStream->avail_out = COMPRESSION_BUFFER_SIZE;
-				}
-			}
+			const tjs_uint8 *bytes = (const tjs_uint8*)ptr;
+			Pending.insert(Pending.end(), bytes, bytes + size);
 		}
 		else
 		{

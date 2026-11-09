@@ -18,7 +18,8 @@
 #include "UtilStreams.h"
 #include "SysInitIntf.h"
 
-#include <zlib.h>
+#include "krkr_shim.h"
+
 #include <algorithm>
 
 bool TVPAllowExtractProtectedStorage = true;
@@ -395,15 +396,9 @@ void tTVPXP3Archive::Init(tTJSBinaryStream *st, tjs_int64 off, bool normalizeNam
 				{
 					st->ReadBuffer(compressed, (tjs_uint)compressed_size);
 
-					unsigned long destlen = (unsigned long)index_size;
-
-					int result = uncompress(  /* uncompress from zlib */
-						(unsigned char *)indexdata,
-						&destlen, (unsigned char*)compressed,
-							(unsigned long)compressed_size);
-					if(result != Z_OK ||
-						destlen != (unsigned long)index_size)
-							TVPThrowExceptionMessage(TVPUncompressionFailed);
+					if( krkr_zlib_uncompress(indexdata, index_size,
+							compressed, (size_t)compressed_size) != index_size )
+						TVPThrowExceptionMessage(TVPUncompressionFailed);
 				}
 				catch(...)
 				{
@@ -710,10 +705,7 @@ public:
 			instream->Read(indata, insize);
 
 			Data = new tjs_uint8 [outsize];
-			unsigned long destlen = outsize;
-			int result = uncompress( (unsigned char*)Data, &outsize,
-				(unsigned char*)indata, insize);
-			if(result != Z_OK || destlen != outsize)
+			if( krkr_zlib_uncompress(Data, outsize, indata, insize) != outsize )
 				TVPThrowExceptionMessage(TVPUncompressionFailed);
 			Size = outsize;
 		}

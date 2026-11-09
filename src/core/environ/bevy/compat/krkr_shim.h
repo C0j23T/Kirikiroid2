@@ -56,6 +56,53 @@ int krkr_webp_info(const void *src, size_t srcLen, KrkrWebpInfo *info);
 // Bytes written to `dst` (width * height * 4), or SIZE_MAX.
 size_t krkr_webp_decode(const void *src, size_t srcLen, void *dst, size_t dstLen);
 
+// PNG (visual/LoadPNG.cpp). The decode target is what a row of the destination
+// bitmap holds, and the return value is the number of bytes written.
+#define KRKR_PNG_RGBA 0 // 4 bytes per pixel
+#define KRKR_PNG_GRAY 1 // 1 byte per pixel
+#define KRKR_PNG_INDEX 2 // 1 byte per pixel: palette index, or gray value
+
+// IHDR color types, as KrkrPngInfo.color_type carries them.
+#define KRKR_PNG_COLOR_GRAY 0
+#define KRKR_PNG_COLOR_PALETTE 3
+
+typedef struct KrkrPngInfo {
+	unsigned width;
+	unsigned height;
+	int bit_depth; // IHDR bit depth
+	int bpp; // bit depth times the channel count
+	int color_type; // IHDR color type
+	int has_alpha;
+	// Non-zero when the chunk is there. `offset_unit` and `vpage_unit` are 0
+	// (pixel) or 1 (micrometer); `resolution_unit` is 0 (unknown) or 1 (meter).
+	int has_offset;
+	int offset_x, offset_y, offset_unit;
+	int has_resolution;
+	unsigned resolution_x, resolution_y;
+	int resolution_unit;
+	int has_vpage;
+	unsigned vpage_width, vpage_height;
+	int vpage_unit;
+} KrkrPngInfo;
+
+// 0 on success, -1 when the data is not a PNG.
+int krkr_png_info(const void *src, size_t srcLen, KrkrPngInfo *info);
+// Bytes written, or SIZE_MAX. `key` is a palette index to make transparent.
+size_t krkr_png_decode(const void *src, size_t srcLen, int target, int key,
+	void *dst, size_t dstLen);
+// 0 on success; the file is allocated by the shim and released with
+// krkr_png_free.
+int krkr_png_encode(const void *pixels, size_t pixelsLen, unsigned width,
+	unsigned height, int bpp, void **png, size_t *pngLen);
+void krkr_png_free(void *png, size_t pngLen);
+
+// zlib streams, for XP3, TextStream and the ZLIB_* plugin functions. `bound`
+// is the most `compress` can write for that many input bytes; the other two
+// return the bytes written, or SIZE_MAX.
+size_t krkr_zlib_bound(size_t srcLen);
+size_t krkr_zlib_compress(void *dst, size_t dstLen, const void *src, size_t srcLen, int level);
+size_t krkr_zlib_uncompress(void *dst, size_t dstLen, const void *src, size_t srcLen);
+
 // Config files (environ/bevy/ConfigFiles.h). A visitor runs on Rust's stack: it
 // must not throw, and must not call back into the shim.
 #define KRKR_PREFERENCE_ITEM 0

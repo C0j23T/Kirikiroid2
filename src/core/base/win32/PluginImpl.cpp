@@ -777,23 +777,35 @@ void * TVPSearchAvailKMPWaveDecoder(const ttstr & storage, KMPMODULE ** module,
 //---------------------------------------------------------------------------
 // some service functions for plugin
 //---------------------------------------------------------------------------
-#include <zlib.h>
+#include "krkr_shim.h"
+namespace {
+// The ZLIB_* plugin functions report zlib's own result codes.
+const int Z_OK = 0;
+const int Z_BUF_ERROR = -5;
+
+int ZLibResult(size_t written, unsigned long *destlen) {
+	if (written == SIZE_MAX) return Z_BUF_ERROR;
+	*destlen = (unsigned long)written;
+	return Z_OK;
+}
+} // namespace
+
 int ZLIB_uncompress(unsigned char *dest, unsigned long *destlen,
 	const unsigned char *source, unsigned long sourcelen)
 {
-	return uncompress(dest, destlen, source, sourcelen);
+	return ZLibResult(krkr_zlib_uncompress(dest, *destlen, source, sourcelen), destlen);
 }
 //---------------------------------------------------------------------------
 int ZLIB_compress(unsigned char *dest, unsigned long *destlen,
 	const unsigned char *source, unsigned long sourcelen)
 {
-	return compress(dest, destlen, source, sourcelen);
+	return ZLibResult(krkr_zlib_compress(dest, *destlen, source, sourcelen, -1), destlen);
 }
 //---------------------------------------------------------------------------
 int ZLIB_compress2(unsigned char *dest, unsigned long *destlen,
 	const unsigned char *source, unsigned long sourcelen, int level)
 {
-	return compress2(dest, destlen, source, sourcelen, level);
+	return ZLibResult(krkr_zlib_compress(dest, *destlen, source, sourcelen, level), destlen);
 }
 //---------------------------------------------------------------------------
 #include "md5.h"

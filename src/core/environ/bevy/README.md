@@ -37,6 +37,13 @@ Changes to upstream files:
   format the build does not have, a corrupt archive) crashed the engine.
 - `environ/ConfigManager/LocaleConfigManager.cpp`: cocos UI helpers compiled out;
   no infinite recursion without locale files;
+- `visual/LoadPNG.cpp`: PNG is decoded and encoded by `krkr_shim` (the `png`
+  crate) through `krkr_png_*`, so libpng is not linked;
+- `base/XP3Archive.cpp`, `base/TextStream.cpp`, `msg/win32/OptionsDesc.cpp`,
+  `base/win32/PluginImpl.cpp`: zlib's one-shot calls go through
+  `krkr_zlib_*` (`miniz_oxide`), so zlib is not linked. The compressed text
+  stream holds its text and compresses it when it closes, instead of streaming
+  through a deflate state;
 - `sound/VorbisWaveDecoder.cpp`: the Opus decoder moved to
   `sound/OpusWaveDecoder.cpp`, which compiles it only under `KRKR_BEVY_OPUS`
   (krkr_sys feature `opus`) and otherwise leaves `OpusWaveDecoderCreator`

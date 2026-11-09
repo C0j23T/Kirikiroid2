@@ -10,7 +10,6 @@
 //---------------------------------------------------------------------------
 #include "tjsCommHead.h"
 
-#include <zlib.h>
 #include "TextStream.h"
 #include "MsgIntf.h"
 #include "DebugIntf.h"
