@@ -3,8 +3,8 @@
 Platform layer that lets the Kirikiroid2 engine core run inside a host
 application ([bevy_krkr](../../../../../README.md)) instead of the cocos2d-x
 front end. The host owns the window, frame loop, input and audio output; the
-engine renders off-screen (`BitmapLayerTreeOwner`) and the host uploads the
-composited pixels as a texture.
+engine sends decoded images, glyph masks and texture commands to Bevy.
+Bevy owns textures and performs all pixel operations and layer composition.
 
 License: the files in this directory and the `bevy port:` changes elsewhere on
 this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
@@ -14,7 +14,9 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 |---|---|
 | `BevyPlatform.h/.cpp` | Linux versions of environ/android, environ/cocos2d/MainScene and environ/win32/Platform functions (log, screen size, files, tick count, dialogs, exit) |
 | `BevyArchives.cpp` | the vendored 7-Zip (`base/7zArchive.cpp`) and minizip (`base/ZIPArchive.cpp`) archives, which are not part of the open-source release: 7z and ZIP are read by `krkr_shim`'s Rust reader (`sevenz-rust2` / `zip`) through the `krkr_archive_*` C ABI |
-| `BevyWindowLayer.cpp` | the platform half of the `Window` class (`visual/win32/WindowImpl.cpp`'s `TTVPWindowForm` / cocos2d's `TVPWindowLayer`): the window renders off-screen and the host shows its pixels and posts input |
+| `BevyRender.cpp` | Texture handles and command dispatch to the host GPU |
+| `BevyScene.cpp` | Layer order, clipping, group opacity and transition commands |
+| `BevyWindowLayer.cpp` | the platform half of the `Window` class (`visual/win32/WindowImpl.cpp`'s `TTVPWindowForm` / cocos2d's `TVPWindowLayer`): the host owns display and posts input to the script window |
 | `BevyPlugins.cpp` + `plugins/` | `tTVPApplication::StartApplication`'s plugin loading (`TVPLoadPluigins`): collects the ncbind plugins compiled into the engine so that a script's `Plugins.link` can attach them, and attaches the ones a game expects to find already there (`xp3filter`, and `Scripts.foreach` / `Scripts.getObjectKeys` from `plugins/ScriptsExt.cpp`, the KAGParserEx.dll replacement). Which plugins exist is `PLUGINS` in bevy_krkr's `codegen/src/port.rs`; the wrapper translation units that keep them in the link are generated from it |
 | `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, Opus) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, video, BPG/JXR/PVR images. They fail with a clear message. |

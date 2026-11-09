@@ -179,9 +179,10 @@ class tTJSNI_BaseWindow;
 class tTVPBaseBitmap;
 class tTVPLayerManager;
 class tTJSNI_BaseLayer :
-	public tTJSNativeInstance, public tTVPDrawable,
+	public tTJSNativeInstance,
 	public tTVPCompactEventCallbackIntf
 {
+    friend struct TVPBevyScene;
 	friend class tTVPLayerManager;
 	friend iTJSDispatch2 * TVPGetObjectFrom_NI_BaseLayer(tTJSNI_BaseLayer * layer);
 protected:
@@ -903,51 +904,11 @@ public:
 	void SetCallOnPaint(bool b) { CallOnPaint = b; }
 	bool GetCallOnPaint() const { return CallOnPaint; }
 
-    //void InternalDrawNoCache_GPU(tTVPDrawable *target, const tTVPRect &rect);
-    void InternalDrawNoCache_CPU(tTVPDrawable *target, const tTVPRect &rect);
-	virtual void Draw_GPU(tTVPDrawable *target, int x, int y, const tTVPRect &r, bool visiblecheck = true);
-
 private:
-	void ParentUpdate();  // called when layer moves
-
-
-	bool InCompletion; // update/completion pipe line is processing
-	void BeforeCompletion(); // called before the drawing is processed
-	void AfterCompletion(); // called after the drawing is processed
-
-	void QueryUpdateExcludeRect(tTVPRect &rect, bool parentvisible);
-		// query update exclude rect ( checks completely opaque area )
-
-    static void BltImage(iTVPBaseBitmap *dest, tTVPLayerType targettype, tjs_int destx,
-        tjs_int desty, iTVPBaseBitmap *src, const tTVPRect &srcrect,
-		tTVPLayerType drawtype, tjs_int opacity, bool hda = false);
-
-	void DrawSelf(tTVPDrawable *target, tTVPRect &pr, 
-		tTVPRect &cr);
-	void CopySelfForRect(iTVPBaseBitmap *dest, tjs_int destx, tjs_int desty,
-		const tTVPRect &srcrect);
-	void CopySelf(iTVPBaseBitmap *dest, tjs_int destx, tjs_int desty,
-		const tTVPRect &r);
-	void EffectImage(iTVPBaseBitmap *dest, const tTVPRect & destrect);
-
-	void Draw(tTVPDrawable *target, const tTVPRect &r, bool visiblecheck = true);
-
-	// these 3 below are methods from tTVPDrawable
-	tTVPBaseTexture * GetDrawTargetBitmap(const tTVPRect &rect,
-		tTVPRect &cliprect);
-	tTVPLayerType GetTargetLayerType();
-	void DrawCompleted(const tTVPRect&destrect, tTVPBaseTexture *bmp,
-		const tTVPRect &cliprect,
-		tTVPLayerType type, tjs_int opacity) override;
-
-	void InternalComplete2(tTVPComplexRect & updateregion, tTVPDrawable *drawable);
-	void InternalComplete2_GPU(tTVPRect updateregion, tTVPDrawable *drawable);
-	void InternalComplete(tTVPComplexRect & updateregion, tTVPDrawable *drawable);
-	void CompleteForWindow(tTVPDrawable *drawable);
-public:
-private:
-	tTVPBaseTexture * Complete(const tTVPRect & rect);
-	tTVPBaseTexture * Complete(); // complete entire area of the layer
+    void ParentUpdate();
+    void QueryUpdateExcludeRect(tTVPRect &rect, bool parentvisible);
+    tTVPBaseTexture *Complete(const tTVPRect &rect);
+    tTVPBaseTexture *Complete();
 
 
 	//---------------------------------------------- transition management --
@@ -991,35 +952,6 @@ private:
 
 	void InvokeTransition(tjs_uint64 tick); // called frequanctly
 
-    void DoDivisibleTransition(iTVPBaseBitmap *dest, tjs_int dx, tjs_int dy,
-		const tTVPRect &srcrect);
-
-	struct tTransDrawable : public tTVPDrawable
-	{
-		// tTVPDrawable class for Transition pipe line rearrangement
-		tTJSNI_BaseLayer * Owner;
-		tTVPBaseTexture * Target;
-		tTVPRect TargetRect;
-		tTVPDrawable *OrgDrawable;
-
-		tTVPBaseTexture *Src1Bmp; // tutDivisible
-		tTVPBaseTexture *Src2Bmp; // tutDivisible
-
-		void Init(tTJSNI_BaseLayer *owner, tTVPDrawable *org)
-		{
-			Owner = owner;
-			OrgDrawable = org;
-			Target = NULL;
-		}
-
-		tTVPBaseTexture * GetDrawTargetBitmap(const tTVPRect &rect,
-			tTVPRect &cliprect) override;
-		tTVPLayerType GetTargetLayerType();
-		void DrawCompleted(const tTVPRect&destrect, tTVPBaseTexture *bmp,
-			const tTVPRect &cliprect,
-			tTVPLayerType type, tjs_int opacity) override;
-	} TransDrawable;
-	friend struct tTransDrawable;
 
 	struct tTransIdleCallback : public tTVPContinuousEventCallbackIntf
 	{

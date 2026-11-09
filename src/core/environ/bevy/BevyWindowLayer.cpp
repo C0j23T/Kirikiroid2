@@ -1,25 +1,3 @@
-// bevy port: the Kirikiri "Window" class, presented by the host.
-//
-// `Window` is what a game's own UI is built on: KAG's `KAGWindow`
-// (`mainwindow.tjs`) creates one and puts every layer in it. Upstream backs it
-// with a platform window (Win32 `TTVPWindowForm`, cocos2d `TVPWindowLayer`);
-// here it renders off-screen and the host uploads the result as a texture, the
-// same way the script-created screen (`BitmapLayerTreeOwner`) is shown.
-//
-// The pipeline the engine drives:
-//
-//   Window's own tTVPBasicDrawDevice composites the layer tree into its draw
-//   buffer  ──Show()──▶  iWindowLayer::UpdateDrawBuffer(texture)
-//                                                 │ copy
-//                                                 ▼
-//                                     RGBA8 snapshot (this file)
-//                                                 │ TVPBevyGetWindowPixels
-//                                                 ▼
-//                                          Bevy sprite
-//
-// Input goes the other way: the host posts the engine's own input events
-// (`tTVPOnMouseDownInputEvent`, …), which call the TJS handlers of the window
-// and of the layers inside it.
 #include "tjsCommHead.h"
 
 #include <algorithm>
@@ -55,19 +33,11 @@ tjs_uint32 TVPGetCurrentShiftKeyState() { return HostShiftState; }
 //---------------------------------------------------------------------------
 // TVPBevyWindowLayer : iWindowLayer
 //---------------------------------------------------------------------------
-/// The port's `Window`. Everything that would move/resize/stack a native window
-/// is a no-op or a plain stored value; what matters is the paint box (the size
-/// the layer tree is composited at) and the snapshot handed to the host.
 class TVPBevyWindowLayer : public iWindowLayer {
     tTJSNI_Window *Owner;
     std::string Caption;
     tjs_int PaintBoxWidth = 0, PaintBoxHeight = 0;
     bool Visible = false;
-    bool HasContent = false;
-
-    std::vector<uint8_t> Pixels; // RGBA8, top-down, PaintBoxWidth*4 per row
-    tjs_int ContentWidth = 0, ContentHeight = 0;
-    uint64_t Revision = 0;
 
 public:
     explicit TVPBevyWindowLayer(tTJSNI_Window *owner) : Owner(owner) {
@@ -80,12 +50,6 @@ public:
     TVPBevyWindowLayer &operator=(const TVPBevyWindowLayer &) = delete;
     tTJSNI_Window *GetWindow() const { return Owner; }
     iTJSDispatch2 *GetOwnerObject() const { return Owner ? Owner->GetOwnerNoAddRef() : nullptr; }
-    bool HasSnapshot() const { return HasContent && !Pixels.empty(); }
-    uint64_t GetRevision() const { return Revision; }
-    tjs_int GetContentWidth() const { return ContentWidth; }
-    tjs_int GetContentHeight() const { return ContentHeight; }
-    const uint8_t *GetPixels() const { return Pixels.empty() ? nullptr : Pixels.data(); }
-
     //-- iWindowLayer : the paint box -----------------------------------------
 
     void SetPaintBoxSize(tjs_int w, tjs_int h) override {
@@ -102,36 +66,7 @@ public:
     void SetHeight(tjs_int h) override { PaintBoxHeight = h; }
     void SetSize(tjs_int w, tjs_int h) override { PaintBoxWidth = w, PaintBoxHeight = h; }
 
-    void UpdateDrawBuffer(iTVPTexture2D *tex) override {
-        if (!tex) return;
-        tjs_int w = (tjs_int)tex->GetWidth(), h = (tjs_int)tex->GetHeight();
-        if (w <= 0 || h <= 0) return;
-        if (tex->GetFormat() != TVPTextureFormat::RGBA) {
-            // TODO
-            static bool warned = false;
-            if (!warned) {
-                warned = true;
-                TVPAddImportantLog(ttstr(TJS_W("bevy_krkr: Window draw buffer is not RGBA; "
-                                              "it will not be shown")));
-            }
-            return;
-        }
-        tjs_int pitch = tex->GetPitch();
-        size_t row = (size_t)w * 4;
-        Pixels.resize(row * (size_t)h);
-        for (tjs_int y = 0; y < h; ++y) {
-            const uint8_t *src = static_cast<const uint8_t *>(tex->GetScanLineForRead((tjs_uint)y));
-            if (!src) continue;
-            uint8_t *dst = Pixels.data() + row * (size_t)y;
-            std::memcpy(dst, src, std::min<size_t>(row, pitch > 0 ? (size_t)pitch : row));
-            for (size_t x = 3; x < row; x += 4) dst[x] = 0xff;
-        }
-        ContentWidth = w;
-        ContentHeight = h;
-        HasContent = true;
-        uint64_t seed = ((uint64_t)w << 32) | (uint64_t)h;
-        Revision = XXH3_64bits_withSeed(Pixels.data(), Pixels.size(), seed);
-    }
+    void UpdateDrawBuffer(iTVPTexture2D *) override {}
 
     //-- iWindowLayer : visibility and lifetime --------------------------------
 
@@ -176,18 +111,7 @@ public:
 
     //-- iWindowLayer : update -------------------------------------------------
 
-    /// `Window.update()`: make the engine repaint the whole window. Also called
-    /// every frame by `TVPBevyTickWindows`, so layers animated or scrolled by a
-    /// script reach the host without an explicit `update()`.
-    void Repaint() {
-        if (!Owner || PaintBoxWidth <= 0 || PaintBoxHeight <= 0) return;
-        tTVPRect rect(0, 0, PaintBoxWidth, PaintBoxHeight);
-        Owner->NotifyWindowExposureToLayer(rect);
-    }
-    void UpdateWindow(tTVPUpdateType) override {
-        Repaint();
-        TVPDeliverWindowUpdateEvents();
-    }
+    void UpdateWindow(tTVPUpdateType) override {}
     void TickBeat() override {}
 
     //-- iWindowLayer : input --------------------------------------------------
@@ -247,7 +171,7 @@ namespace {
 TVPBevyWindowLayer *FrontWindow() {
     for (auto it = Windows.rbegin(); it != Windows.rend(); ++it) {
         TVPBevyWindowLayer *window = *it;
-        if (window->HasSnapshot() && window->GetVisible()) return window;
+        if (window->GetVisible()) return window;
     }
     return nullptr;
 }
@@ -307,14 +231,12 @@ iWindowLayer *TVPCreateAndAddWindow(tTJSNI_Window *w) {
 // what the host calls
 //---------------------------------------------------------------------------
 
-bool TVPBevyGetWindowPixels(TVPBevyWindowPixels &out) {
+tTJSNI_BaseLayer *TVPBevyFrontWindowLayer() {
     TVPBevyWindowLayer *window = FrontWindow();
-    if (!window) return false;
-    out.pixels = window->GetPixels();
-    out.width = (unsigned int)window->GetContentWidth();
-    out.height = (unsigned int)window->GetContentHeight();
-    out.revision = window->GetRevision();
-    return out.pixels && out.width && out.height;
+    if (!window) return nullptr;
+    tTJSNI_Window *owner = window->GetWindow();
+    iTVPDrawDevice *device = owner ? owner->GetDrawDevice() : nullptr;
+    return device ? device->GetPrimaryLayer() : nullptr;
 }
 
 void TVPBevyWindowMouseMove(int x, int y) {
@@ -353,12 +275,6 @@ void TVPBevyWindowKeyUp(int vk, unsigned int shift) {
 }
 
 void TVPBevyTickWindows() {
-    // A native window is repainted by its message loop; the host has none, so
-    // the port asks for the repaint once per frame. Without this a window only
-    // shows the frame its script explicitly asked for with `update()`.
-    for (TVPBevyWindowLayer *window : Windows) {
-        if (window->GetVisible()) window->Repaint();
-    }
     TVPDeliverWindowUpdateEvents();
     DestroyClosePendingWindows();
 }

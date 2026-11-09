@@ -19,65 +19,7 @@
 #define GL_MAX 0x8008
 #define GL_FUNC_REVERSE_SUBTRACT 0x800B
 #endif
-#if 0
-struct _BITMAPINFO;
-//---------------------------------------------------------------------------
-// tTVPBitmap : internal bitmap object
-//---------------------------------------------------------------------------
-class tTVPBitmap
-{
-	tjs_int RefCount;
-
-	void * Bits; // pointer to bitmap bits
-	_BITMAPINFO *BitmapInfo; // DIB information
-	tjs_int BitmapInfoSize;
-
-	tjs_int PitchBytes; // bytes required in a line
-	tjs_int PitchStep; // step bytes to next(below) line
-	tjs_int Width; // actual width
-	tjs_int Height; // actual height
-
-public:
-	tTVPBitmap(tjs_uint width, tjs_uint height, tjs_uint bpp);
-
-	tTVPBitmap(const tTVPBitmap & r);
-
-	~tTVPBitmap();
-
-	void Allocate(tjs_uint width, tjs_uint height, tjs_uint bpp);
-
-	void AddRef(void)
-	{
-		RefCount++;
-	}
-
-	void Release(void)
-	{
-		if (RefCount == 1)
-			delete this;
-		else
-			RefCount--;
-	}
-
-	tjs_uint GetWidth() const { return Width; }
-	tjs_uint GetHeight() const { return Height; }
-
-	tjs_uint GetBPP() const;
-	bool Is32bit() const;
-	bool Is8bit() const;
-
-
-	void * GetScanLine(tjs_uint l) const;
-
-	tjs_int GetPitch() const { return PitchStep; }
-
-	bool IsIndependent() const { return RefCount == 1; }
-
-	const void * GetBits() const { return Bits; }
-};
-#else
 //#include "LayerBitmapImpl.h"
-#endif
 
 struct TVPTextureFormat {
 	enum e {

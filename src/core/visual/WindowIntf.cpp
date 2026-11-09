@@ -626,20 +626,11 @@ void tTJSNI_BaseWindow::NotifyUpdateRegionFixed(const tTVPComplexRect &updaterec
 //---------------------------------------------------------------------------
 void tTJSNI_BaseWindow::UpdateContent()
 {
-	if( DrawDevice ) {
-		// is called from event dispatcher
-		DrawDevice->Update();
-
-		if( !WaitVSync ) DrawDevice->Show();
-
- 		EndUpdate();
-	}
+	EndUpdate();
 }
 //---------------------------------------------------------------------------
 void tTJSNI_BaseWindow::DeliverDrawDeviceShow()
 {
-	// call DrawDevice->Show, at VBlank
-	if( DrawDevice ) DrawDevice->Show();
 }
 //---------------------------------------------------------------------------
 void tTJSNI_BaseWindow::BeginUpdate(const tTVPComplexRect & rects)

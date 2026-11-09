@@ -10,9 +10,6 @@
 //#define LOG_NEON_TEST
 
 #ifdef __cplusplus
-#if defined(_MSC_VER)
-#include <opencv2/core/mat.hpp>
-#endif
 #include <vector>
 extern "C" {
 #endif
@@ -2653,10 +2650,6 @@ static void CheckTestData(const char *pszFuncName)
 		{
 			char tmp[256];
 			sprintf(tmp, "test fail on function %s", pszFuncName);
-#ifdef _MSC_VER
-			cv::Mat test1(256, 256, CV_8UC4, testdest1, 1024);
-			cv::Mat test2(256, 256, CV_8UC4, testdest2, 1024);
-#endif
 			ShowInMessageBox(tmp);
 #if !defined(WIN32) && 0
 			const char bmphdr[] = "\x42\x4D\x36\x00\x04\x00\x00\x00\x00\x00\x36\x00\x00\x00\x28\x00\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x01\x00\x20\x00\x00\x00\x00\x00\x00\x00\x00\x00\x12\x0B\x00\x00\x12\x0B\x00\x00\x00\x00\x00\x00\x00\x00\x00";
@@ -2695,10 +2688,6 @@ static void CheckTestData_RGB(const char *pszFuncName)
 		{
 			char tmp[256];
 			sprintf(tmp, "test fail on function %s", pszFuncName);
-#ifdef _MSC_VER
-			cv::Mat test1(256, 256, CV_8UC4, testdest1, 1024);
-			cv::Mat test2(256, 256, CV_8UC4, testdest2, 1024);
-#endif
 			ShowInMessageBox(tmp);
 			//assert(!pszFuncName);
 			return;

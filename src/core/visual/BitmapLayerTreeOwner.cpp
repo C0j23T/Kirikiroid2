@@ -60,48 +60,8 @@ void TJS_INTF_METHOD tTJSNI_BitmapLayerTreeOwner::StartBitmapCompletion(iTVPLaye
 void TJS_INTF_METHOD tTJSNI_BitmapLayerTreeOwner::NotifyBitmapCompleted(class iTVPLayerManager * manager,
 	tjs_int x, tjs_int y, tTVPBaseTexture *bitmapinfo,
 	const tTVPRect &cliprect, tTVPLayerType type, tjs_int opacity) {
-	assert(BitmapNI);
-
-	tjs_int w, h;
-	GetPrimaryLayerSize( w, h );
-	if( BitmapNI ) {
-		BitmapNI->SetSize( w, h );
-	}
-	tjs_uint8* dstbits = (tjs_uint8*)BitmapNI->GetPixelBufferForWrite();
-	tjs_int dstpitch = BitmapNI->GetPixelBufferPitch();
-	// cliprect がはみ出していいないことを確認
-	if( !(x < 0 || y < 0 || x + cliprect.get_width() > w || y + cliprect.get_height() > h) &&
-		!(cliprect.left < 0 || cliprect.top < 0 ||
-			cliprect.right > bitmapinfo->GetWidth() || cliprect.bottom > bitmapinfo->GetHeight()) )
-	{
-		// bitmapinfo で表された cliprect の領域を x,y にコピーする
-		long src_y       = cliprect.top;
-		long src_y_limit = cliprect.bottom;
-		long src_x       = cliprect.left;
-		long width_bytes   = cliprect.get_width() * 4; // 32bit
-		long dest_y      = y;
-		long dest_x      = x;
-		const tjs_uint8 * src_p = (const tjs_uint8 *)bitmapinfo->GetScanLine(0);
-		long src_pitch;
-#if 0
-		if(bitmapinfo->GetHeight() < 0) {
-			// bottom-down
-			src_pitch = bitmapinfo->GetWidth() * 4;
-		} else
-#endif
-		{
-			// bottom-up
-			src_pitch = -(int)bitmapinfo->GetWidth() * 4;
-			src_p += bitmapinfo->GetWidth() * 4 * (bitmapinfo->GetHeight() - 1);
-		}
-
-		for(; src_y < src_y_limit; src_y ++, dest_y ++) {
-			const void *srcp = src_p + src_pitch * src_y + src_x * 4;
-			void *destp = dstbits + dstpitch * dest_y + dest_x * 4;
-			memcpy(destp, srcp, width_bytes);
-		}
-	}
 }
+
 void TJS_INTF_METHOD tTJSNI_BitmapLayerTreeOwner::EndBitmapCompletion(iTVPLayerManager * manager) {
 }
 

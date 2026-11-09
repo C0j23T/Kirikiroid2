@@ -577,29 +577,6 @@ void tTVPNativeBaseBitmap::SetSize(tjs_uint w, tjs_uint h, bool keepimage)
 			newbitmap = GetRenderManager()->CreateTexture2D(w, h, Bitmap);
 		else
 			newbitmap = GetRenderManager()->CreateTexture2D(nullptr, 0, w, h, Bitmap->GetFormat());
-#if 0
-		tTVPBitmap *newbitmap = new tTVPBitmap(w, h, Bitmap->GetBPP());
-
-		if(keepimage)
-		{
-			tjs_int pixelsize = Bitmap->Is32bit() ? 4 : 1;
-			tjs_int lh = h < Bitmap->GetHeight() ?
-				h : Bitmap->GetHeight();
-			tjs_int lw = w < Bitmap->GetWidth() ?
-				w : Bitmap->GetWidth();
-			tjs_int cs = lw * pixelsize;
-			tjs_int i;
-			for(i = 0; i < lh; i++)
-			{
-				void * ds = newbitmap->GetScanLine(i);
-				void * ss = Bitmap->GetScanLine(i);
-
-				memcpy(ds, ss, cs);
-			}
-			if( pixelsize == 1 )
-				memcpy(newbitmap->GetPalette(), Bitmap->GetPalette(), sizeof(tjs_uint)*tTVPBitmap::DEFAULT_PALETTE_COUNT);
-		}
-#endif
 		Bitmap->Release();
 		Bitmap = newbitmap;
 
@@ -629,9 +606,6 @@ tjs_uint tTVPNativeBaseBitmap::GetBPP() const
 		// error !
 		return 0;
 	}
-#if 0
-	return Bitmap->GetBPP();
-#endif
 }
 //---------------------------------------------------------------------------
 bool tTVPNativeBaseBitmap::Is32BPP() const
@@ -744,24 +718,6 @@ bool tTVPNativeBaseBitmap::IsIndependent() const
 {
 	return Bitmap->IsIndependent() && !Bitmap->IsStatic();
 }
-#if 0
-//---------------------------------------------------------------------------
-tjs_uint tTVPNativeBaseBitmap::GetPalette( tjs_uint index ) const {
-	if( !Is8BPP() ) TVPThrowExceptionMessage(TVPInvalidOperationFor32BPP);
-	if( index >= Bitmap->GetPaletteCount() )
-		TVPThrowExceptionMessage(TJSRangeError);
-
-	return Bitmap->GetPalette()[index];
-}
-//---------------------------------------------------------------------------
-void tTVPNativeBaseBitmap::SetPalette( tjs_uint index, tjs_uint color ) {
-	if( !Is8BPP() ) TVPThrowExceptionMessage(TVPInvalidOperationFor32BPP);
-	if( index >= Bitmap->GetPaletteCount() ) {
-		Bitmap->SetPaletteCount( index+1 );
-	}
-	Bitmap->GetPalette()[index] = color;
-}
-#endif
 //---------------------------------------------------------------------------
 void tTVPNativeBaseBitmap::ApplyFont()
 {
@@ -835,122 +791,23 @@ struct tTVPDrawTextData
 	tTVPBBBltMethod bltmode;
 };
 
-static iTVPTexture2D *_CharacterTexture = nullptr, *_CharacterTextureRGBA = nullptr;
-
 bool tTVPNativeBaseBitmap::InternalBlendText(
-    tTVPCharacterData *data, tTVPDrawTextData *dtdata, tjs_uint32 color, const tTVPRect &srect, tTVPRect &drect)
+    tTVPCharacterData *data, tTVPDrawTextData *text, tjs_uint32 color,
+    const tTVPRect &source, tTVPRect &destination)
 {
-    // blend to the bitmap
-    tjs_int pitch = data->Pitch;
-    //tjs_uint8 *sl = (tjs_uint8*)GetScanLineForWrite(drect.top);
-    tjs_int h = drect.bottom - drect.top;
-    tjs_int w = drect.right - drect.left;
-	tjs_uint8 *bp = data->GetData() + pitch * srect.top;
-
-	iTVPRenderMethod * method = nullptr;
-	int opa_id, clr_id;
-#define GEMTHOD_OPA_CLR(n) \
-	static iTVPRenderMethod *_method = TVPGetRenderManager()->GetRenderMethod(#n); \
-	static int _opa_id = _method->EnumParameterID("opacity"); \
-	static int _clr_id = _method->EnumParameterID("color"); \
-	method = _method; opa_id = _opa_id; clr_id = _clr_id;
-
-	static bool fastGPURoute = !TVPIsSoftwareRenderManager()
-		&& !IndividualConfigManager::GetInstance()->GetValue<bool>("ogl_accurate_render", false);
-
-	iTVPTexture2D *pTexSrc;
-	if (fastGPURoute && dtdata->bltmode == bmAlphaOnAlpha && dtdata->opa > 0) {
-		// convert to addalpha bitmap
-		tTVPBitmap* tmp = new tTVPBitmap(w, h, 32);
-		tjs_int spitch = pitch;
-		tjs_int dpitch = tmp->GetPitch();
-		tjs_uint8 *src = bp;
-		tjs_uint8* dst = (tjs_uint8*)tmp->GetBits();
-		for (tjs_int y = 0; y < h; ++y) {
-			for (tjs_int x = 0; x < w; ++x) {
-				((tjs_uint32*)dst)[x] = (color & 0xFFFFFF) | (src[x] << 24);
-			}
-			TVPConvertAlphaToAdditiveAlpha((tjs_uint32*)dst, w);
-			dst += dpitch;
-			src += spitch;
-		}
-		if (_CharacterTextureRGBA) {
-			if (_CharacterTextureRGBA->GetFormat() != TVPTextureFormat::RGBA) {
-				_CharacterTextureRGBA->Release();
-				_CharacterTextureRGBA = nullptr;
-			}
-		}
-		if (!_CharacterTextureRGBA) {
-			_CharacterTextureRGBA = GetRenderManager()->CreateTexture2D(tmp->GetBits(), dpitch, w, h, TVPTextureFormat::RGBA, RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
-		} else if (_CharacterTextureRGBA->GetInternalWidth() < w || _CharacterTextureRGBA->GetInternalHeight() < h) {
-			_CharacterTextureRGBA->Release();
-			_CharacterTextureRGBA = GetRenderManager()->CreateTexture2D(tmp->GetBits(), dpitch, w, h, TVPTextureFormat::RGBA, RENDER_CREATE_TEXTURE_FLAG_NO_COMPRESS);
-		} else {
-			_CharacterTextureRGBA->Update(tmp->GetBits(), TVPTextureFormat::RGBA, dpitch, tTVPRect(0, 0, w, h));
-		}
-
-		tmp->Release();
-
-		GEMTHOD_OPA_CLR(AlphaBlend_a);
-		method->SetParameterOpa(opa_id, dtdata->opa);
-		pTexSrc = _CharacterTextureRGBA;
-	} else {
-		if (dtdata->bltmode == bmAlphaOnAlpha) {
-			if (dtdata->opa > 0) {
-				GEMTHOD_OPA_CLR(ApplyColorMap_d);
-			} else {
-				// opacity removal
-				GEMTHOD_OPA_CLR(RemoveOpacity);
-			}
-		} else if (dtdata->bltmode == bmAlphaOnAddAlpha) {
-			GEMTHOD_OPA_CLR(ApplyColorMap_a);
-		} else {
-			GEMTHOD_OPA_CLR(ApplyColorMap);
-		}
-
-		// blend to the texture
-		if (!_CharacterTexture) {
-			_CharacterTexture = GetRenderManager()->CreateTexture2D(nullptr, pitch, w, h, TVPTextureFormat::Gray);
-		} else if (_CharacterTexture->GetInternalWidth() < w || _CharacterTexture->GetInternalHeight() < h) {
-			_CharacterTexture->Release();
-			_CharacterTexture = GetRenderManager()->CreateTexture2D(nullptr, pitch, w, h, TVPTextureFormat::Gray);
-		}
-		_CharacterTexture->Update(bp, TVPTextureFormat::Gray, pitch, tTVPRect(0, 0, w, h));
-
-		method->SetParameterOpa(opa_id, dtdata->opa);
-		method->SetParameterColor4B(clr_id, color);
-
-		pTexSrc = _CharacterTexture;
-	}
-#if 0
-    if (pShader->isBlendEnabled() || !IsIndependent()) {
-		iTVPTexture2D *origTex = GetTexture();
-		iTVPTexture2D *tex = GetTextureForRender();
-        TVPRenderTexture2(pShader,
-            tex, drect,
-            origTex, drect,
-            _CharacterTexture, texRect(0, 0, w, h));
-    } else { // optimize for independent texture
-		iTVPTexture2D *tmptex = TVPCreateTextureForRender(drect.get_width(), drect.get_height());
-		iTVPTexture2D *tex = GetTexture();
-        texRect rc(drect);
-        rc.x = 0; rc.y = 0;
-        TVPCopyTexture(
-            tmptex, rc,
-            tex, drect);
-        TVPRenderTexture2(pShader,
-            tex, drect,
-            tmptex, rc,
-            _CharacterTexture, texRect(0, 0, w, h));
-        tmptex->Release();
-    }
-#endif
-	tRenderTexRectArray::Element src_tex[] = {
-		tRenderTexRectArray::Element(pTexSrc, tTVPRect(0, 0, w, h))
-	};
-	TVPGetRenderManager()->OperateRect(method,
-		GetTextureForRender(method->IsBlendTarget(), &drect), nullptr, drect,
-		tRenderTexRectArray(src_tex));
+    const int width = destination.get_width(), height = destination.get_height();
+    const auto pixels = data->GetData() + data->Pitch * source.top + source.left;
+    auto manager = GetRenderManager();
+    auto mask = manager->CreateTexture2D(pixels,data->Pitch,width,height,TVPTextureFormat::Gray);
+    struct Release { iTVPTexture2D *Texture; ~Release() { Texture->Release(); } } release{mask};
+    const char *name = "ApplyColorMap";
+    if (text->bltmode == bmAlphaOnAlpha) name = text->opa > 0 ? "ApplyColorMap_d" : "RemoveOpacity";
+    else if (text->bltmode == bmAlphaOnAddAlpha) name = "ApplyColorMap_a";
+    auto method = manager->GetRenderMethod(name);
+    method->SetParameterOpa(method->EnumParameterID("opacity"),text->opa);
+    method->SetParameterColor4B(method->EnumParameterID("color"),color);
+    tRenderTexRectArray::Element inputs[] = {{mask,tTVPRect(0,0,width,height)}};
+    manager->OperateRect(method,GetTextureForRender(true,&destination),nullptr,destination,inputs);
     return true;
 }
 

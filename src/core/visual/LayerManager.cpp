@@ -32,7 +32,6 @@ tTVPLayerManager::tTVPLayerManager(iTVPLayerTreeOwner *owner)
 	RefCount = 1;
 	LayerTreeOwner = owner;
 	DrawDeviceData = NULL;
-	DrawBuffer = NULL;
 	DesiredLayerType = ltOpaque;
 
 	CaptureOwner = NULL;
@@ -50,7 +49,6 @@ tTVPLayerManager::tTVPLayerManager(iTVPLayerTreeOwner *owner)
 //---------------------------------------------------------------------------
 tTVPLayerManager::~tTVPLayerManager()
 {
-	if(DrawBuffer) delete DrawBuffer;
 }
 //---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPLayerManager::AddRef()
@@ -76,97 +74,6 @@ void tTVPLayerManager::UnregisterSelfFromWindow()
 	LayerTreeOwner->UnregisterLayerManager(this);
 }
 
-void tTVPLayerManager::SetHoldAlpha(bool b)
-{
-	HoldAlpha = b;
-	if (!DrawBuffer) return;
-	static_cast<tTVPDestTexture*>(DrawBuffer)->SetHoldAlpha(b);
-}
-
-//---------------------------------------------------------------------------
-tTVPBaseTexture * tTVPLayerManager::GetDrawTargetBitmap(const tTVPRect &rect,
-	tTVPRect &cliprect)
-{
-	// retrieve draw target bitmap
-	tjs_int w = rect.get_width();
-	tjs_int h = rect.get_height();
-
-	if(!DrawBuffer) {
-		// create draw buffer
-        if(Primary) {
-            const tTVPRect & rc = Primary->GetRect();
-            w = rc.get_width();
-            h = rc.get_height();
-		}
-        DrawBuffer = new tTVPDestTexture(w, h);
-		DrawBuffer->Fill(tTVPRect(0, 0, w, h), 0xFF000000);
-		static_cast<tTVPDestTexture*>(DrawBuffer)->SetHoldAlpha(HoldAlpha);
-    } else {
-		tjs_int bw = DrawBuffer->GetWidth();
-		tjs_int bh = DrawBuffer->GetHeight();
-		if(bw < w || bh  < h) {
-			// insufficient size; resize the draw buffer
-			tjs_uint neww = bw > w ? bw:w, newh = bh > h ? bh : h;
-			neww += (neww & 1); // align to even
-			DrawBuffer->SetSize(neww, newh, false);
-			DrawBuffer->Fill(tTVPRect(0, 0, neww, newh), 0xFF000000);
-		}
-	}
-
-	cliprect = rect;
-	return DrawBuffer;
-}
-//---------------------------------------------------------------------------
-tTVPLayerType tTVPLayerManager::GetTargetLayerType()
-{
-	return DesiredLayerType;
-}
-//---------------------------------------------------------------------------
-void tTVPLayerManager::DrawCompleted(const tTVPRect &destrect,
-	tTVPBaseTexture *bmp, const tTVPRect &cliprect,
-		tTVPLayerType type, tjs_int opacity)
-{
-#if 0
-	if (!LayerTreeOwner) return;
-	LayerTreeOwner->NotifyBitmapCompleted(this, destrect.left, destrect.top, bmp, cliprect, type, opacity);
-#else
-    tjs_int w, h;
-	if(!/*LayerTreeOwner->*/GetPrimaryLayerSize(w, h)) return;
-    //Window->GetDrawDevice()->GetSrcSize(w, h);
-    if (!DrawBuffer) {
-        // create draw buffer
-		DrawBuffer = new tTVPDestTexture(w, h);
-		DrawBuffer->Fill(tTVPRect(0, 0, w, h), 0xFF000000);
-		static_cast<tTVPDestTexture*>(DrawBuffer)->SetHoldAlpha(HoldAlpha);
-	} else {
-        tjs_int bw = DrawBuffer->GetWidth();
-        tjs_int bh = DrawBuffer->GetHeight();
-        if (bw < w || bh  < h) {
-            // insufficient size; resize the draw buffer
-            tjs_uint neww = bw > w ? bw : w, newh = bh > h ? bh : h;
-            neww += (neww & 1); // align to even
-            DrawBuffer->SetSize(neww, newh, false);
-			DrawBuffer->Fill(tTVPRect(0, 0, neww, newh), 0xFF000000);
-		}
-    }
-
-	DrawBuffer->Blt(destrect.left, destrect.top, bmp, cliprect, type, opacity, HoldAlpha);
-#endif
-}
-
-tTVPBaseTexture* tTVPLayerManager::GetOrCreateDrawBuffer()
-{
-	if (!DrawBuffer) {
-		tjs_int w, h;
-		if (!GetPrimaryLayerSize(w, h)) return nullptr;
-		DrawBuffer = new tTVPDestTexture(w, h);
-		DrawBuffer->Fill(tTVPRect(0, 0, w, h), 0xFF000000);
-		static_cast<tTVPDestTexture*>(DrawBuffer)->SetHoldAlpha(HoldAlpha);
-	}
-	return DrawBuffer;
-}
-
-//---------------------------------------------------------------------------
 void tTVPLayerManager::AttachPrimary(tTJSNI_BaseLayer *pri)
 {
 	// attach primary layer to the manager
@@ -1104,9 +1011,6 @@ void tTVPLayerManager::AddUpdateRegion(const tTVPRect &rect)
 //---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPLayerManager::UpdateToDrawDevice()
 {
-	// drawdevice -> layer
-	if(!Primary) return;
-	Primary->CompleteForWindow(this);
 }
 //---------------------------------------------------------------------------
 void tTVPLayerManager::NotifyUpdateRegionFixed()
@@ -1143,12 +1047,3 @@ void TJS_INTF_METHOD tTVPLayerManager::DumpLayerStructure()
 	if(Primary) Primary->DumpStructure();
 }
 //---------------------------------------------------------------------------
-
-bool tTVPDestTexture::CopyRect(tjs_int x, tjs_int y, const iTVPBaseBitmap *ref, tTVPRect refrect, tjs_int plane /*= (TVP_BB_COPY_MAIN | TVP_BB_COPY_MASK)*/)
-{
-	if (HoldAlpha) {
-		return tTVPBaseTexture::CopyRect(x, y, ref, refrect, TVP_BB_COPY_MAIN);
-	} else {
-		return tTVPBaseTexture::CopyRect(x, y, ref, refrect, plane);
-	}
-}

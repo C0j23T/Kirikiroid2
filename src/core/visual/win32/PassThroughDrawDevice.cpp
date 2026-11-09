@@ -468,16 +468,6 @@ void TJS_INTF_METHOD tTVPPassThroughDrawDevice::NotifyBitmapCompleted(iTVPLayerM
 //---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPPassThroughDrawDevice::EndBitmapCompletion(iTVPLayerManager * manager)
 {
-//     TVPCopyTexture(
-//         NULL, texRect(DestRect.left, DestRect.bottom, DestRect.get_width(), -DestRect.get_height()),
-//         manager->GetDrawBuffer()->GetTexture(), texRect(0, 0, SrcWidth, SrcHeight)
-//         );
-    if (Drawer) {
-//         tTVPBaseTexture *bmp = manager->GetDrawBuffer();
-//         tTVPRect rc(0, 0, bmp->GetWidth(), bmp->GetHeight());
-//         Drawer->NotifyBitmapCompleted(0, 0, bmp, rc);
-        Drawer->EndBitmapCompletion(manager->GetDrawBuffer());
-    }
 }
 //---------------------------------------------------------------------------
 
