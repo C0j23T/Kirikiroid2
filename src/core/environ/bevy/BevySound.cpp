@@ -273,6 +273,11 @@ void DropBuffer(BevySoundBuffer *buffer) {
 
 } // namespace
 
+// The device is the host's, which pulls the mix with `TVPBevyMixAudio`, so
+// there is no engine-side device to open or close.
+void TVPInitDirectSound(int) {}
+void TVPUninitDirectSound() {}
+
 iTVPSoundBuffer *TVPCreateSoundBuffer(tTVPWaveFormat &fmt, int bufcount) {
     // The format is taken as the engine hands it over and mixed from there: the
     // engine converts the decoder's output to it, so leaving it alone keeps

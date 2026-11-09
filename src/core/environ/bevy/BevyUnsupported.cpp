@@ -4,9 +4,8 @@
 //
 //  - Window / input / menus / file dialogs: owned by the Bevy host. Scripts
 //    render into BitmapLayerTreeOwner layers; the host reads their pixels.
-//  - Sound output: the engine's buffers are mixed in BevySound.cpp and pulled
-//    by the host's device (WaveMixer.cpp/SDL is not built). Only the
-//    DirectSound entry points are stubbed here.
+//  - Sound output: entirely BevySound.cpp's, which mixes the engine's buffers
+//    for the host's device to pull (WaveMixer.cpp/SDL is not built).
 //  - Video playback (ffmpeg/movie): not built.
 //  - BPG / JXR / PVRv3 images: their libraries are not vendored in this
 //    checkout. PNG, JPEG, WEBP, TLG, BMP and XP3/TAR/7z/ZIP work.
@@ -21,7 +20,6 @@
 #include "StorageIntf.h"
 #include "WaveIntf.h"
 #include "FFWaveDecoder.h"
-#include "win32/WaveMixer.h"
 
 class tTJSNI_Window;
 class tTJSNI_MenuItem;
@@ -54,11 +52,6 @@ void TVPOpenPatchLibUrl() {
 }
 
 // ─── sound output ───────────────────────────────────────────────────────────
-
-// The device itself is the host's: `TVPCreateSoundBuffer` is in BevySound.cpp,
-// which mixes the engine's buffers for the host to pull.
-void TVPInitDirectSound(int) {}
-void TVPUninitDirectSound() {}
 
 tTVPWaveDecoder *FFWaveDecoderCreator::Create(const ttstr &, const ttstr &) {
     return nullptr; // ffmpeg decoder not built; other decoders are tried
