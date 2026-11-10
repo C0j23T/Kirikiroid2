@@ -82,7 +82,7 @@ class WindowMenuProperty : public tTJSDispatch {
 	tjs_error TJS_INTF_METHOD PropSet(tjs_uint32 flag, const tjs_char *membername, tjs_uint32 *hint, const tTJSVariant *param, iTJSDispatch2 *objthis) {
 		return TJS_E_ACCESSDENYED;
 	}
-} *gWindowMenuProperty;
+};
 
 //---------------------------------------------------------------------------
 // tTJSNI_MenuItem
@@ -364,6 +364,20 @@ tjs_int tTJSNI_MenuItem::TrackPopup(tjs_uint32 flags, tjs_int x, tjs_int y) cons
 static iTJSDispatch2* textToKeycodeMap = nullptr;
 static iTJSDispatch2* keycodeToTextList = nullptr;
 
+void TVPResetMenuItemState()
+{
+    auto menus = std::move(MENU_LIST);
+    MENU_LIST.clear();
+    for (auto &entry : menus) {
+        entry.second->Invalidate(0, nullptr, nullptr, entry.second);
+        entry.second->Release();
+    }
+    if (textToKeycodeMap) textToKeycodeMap->Release();
+    if (keycodeToTextList) keycodeToTextList->Release();
+    textToKeycodeMap = nullptr;
+    keycodeToTextList = nullptr;
+}
+
 static bool SetShortCutKeyCode(ttstr text, int key, bool force) {
 	tTJSVariant vtext(text);
 	tTJSVariant vkey(key);
@@ -468,36 +482,19 @@ TJS_BEGIN_NATIVE_PROP_DECL(keycodeToText)
 TJS_END_NATIVE_STATIC_PROP_DECL_OUTER(cls, keycodeToText)
 //---------------------------------------------------------------------------
 
-	if (!textToKeycodeMap) {
-		CreateShortCutKeyCodeTable();
-
-		tTJSVariant val;
-
-		iTJSDispatch2 * global = TVPGetScriptDispatch();
-
-		{
-			gWindowMenuProperty = new WindowMenuProperty();
-			val = tTJSVariant(gWindowMenuProperty);
-			gWindowMenuProperty->Release();
-			tTJSVariant win;
-			if (TJS_SUCCEEDED(global->PropGet(0, TJS_W("Window"), NULL, &win, global))) {
-				iTJSDispatch2* obj = win.AsObjectNoAddRef();
-				obj->PropSet(TJS_MEMBERENSURE, TJS_W("menu"), NULL, &val, obj);
-				win.Clear();
-			}
-			val.Clear();
-
-			//-----------------------------------------------------------------------
-			iTJSDispatch2 * tjsclass = TVPCreateNativeClass_MenuItem();
-			val = tTJSVariant(tjsclass);
-			tjsclass->Release();
-			global->PropSet(TJS_MEMBERENSURE, TJS_W("MenuItem"), NULL, &val, global);
-			//-----------------------------------------------------------------------
-
-		}
-
-		global->Release();
-	}
+	if (!textToKeycodeMap) CreateShortCutKeyCodeTable();
+    iTJSDispatch2 *global = TVPGetScriptDispatch();
+    if (global) {
+        tTJSVariant win;
+        if (TJS_SUCCEEDED(global->PropGet(0, TJS_W("Window"), nullptr, &win, global))) {
+            auto property = new WindowMenuProperty();
+            tTJSVariant value(property);
+            property->Release();
+            auto window = win.AsObjectNoAddRef();
+            window->PropSet(TJS_MEMBERENSURE, TJS_W("menu"), nullptr, &value, window);
+        }
+        global->Release();
+    }
 
 	return cls;
 }

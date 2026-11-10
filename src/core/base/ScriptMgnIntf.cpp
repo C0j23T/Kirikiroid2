@@ -27,6 +27,7 @@
 #include "SystemIntf.h"
 #include "PluginIntf.h"
 #include "MenuItemIntf.h"
+#include "MenuItemImpl.h"
 #include "ClipboardIntf.h"
 #include "MsgIntf.h"
 #include "KAGParser.h"
@@ -565,6 +566,7 @@ void TVPUninitScriptEngine()
 {
 	if(!TVPScriptEngine) return;
 
+	TVPResetMenuItemState();
 	TVPScriptEngine->Shutdown();
 	{
 		tjs_int live = TVPScriptEngine->GetLiveScriptBlockCount();

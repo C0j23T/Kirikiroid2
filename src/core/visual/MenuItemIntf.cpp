@@ -12,6 +12,7 @@
 
 #include "MsgIntf.h"
 #include "MenuItemIntf.h"
+#include "ScriptMgnIntf.h"
 #include "WindowIntf.h"
 #include "EventIntf.h"
 #include "tjsArray.h"
@@ -593,18 +594,18 @@ TJS_END_NATIVE_PROP_DECL(index)
 //---------------------------------------------------------------------------
 iTJSDispatch2 * TVPCreateMenuItemObject(iTJSDispatch2 * window)
 {
-	struct tHolder
-	{
-		iTJSDispatch2 * Obj;
-		tHolder() { Obj = new tTJSNC_MenuItem(); }
-		~tHolder() { Obj->Release(); }
-	} static menuitemclass;
+	tTJSVariant menuclass;
+    iTJSDispatch2 *global = TVPGetScriptDispatch();
+    tjs_error status = global->PropGet(0, TJS_W("MenuItem"), nullptr, &menuclass, global);
+    global->Release();
+    if (TJS_FAILED(status)) TVPThrowExceptionMessage(TVPInternalError, TJS_W("MenuItem"));
+    auto cls = menuclass.AsObjectNoAddRef();
 
 	iTJSDispatch2 *out;
 	tTJSVariant param(window);
 	tTJSVariant *pparam[2] = {&param, &param};
-	if(TJS_FAILED(menuitemclass.Obj->CreateNew(0, NULL, NULL, &out, 2, pparam,
-		menuitemclass.Obj)))
+	if(TJS_FAILED(cls->CreateNew(0, NULL, NULL, &out, 2, pparam,
+		cls)))
 		TVPThrowExceptionMessage(TVPInternalError,
 			TJS_W("TVPCreateMenuItemObject"));
 

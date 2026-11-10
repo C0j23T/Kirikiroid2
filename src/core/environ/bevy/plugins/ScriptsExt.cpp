@@ -1,11 +1,4 @@
-// bevy port: `Scripts.foreach` and `Scripts.getObjectKeys`.
-//
-// Both come from KAGParserEx.dll, the KAG parser extension yuzusoft ships with
-// their games; it is closed source and not part of this checkout. KAG's own
-// system scripts use them heavily (`Scripts.foreach(objects, function(o) ...)`
-// in world.tjs/KAGEnvBase, `Scripts.getObjectKeys` everywhere around it), so
-// without them a game's `startup.tjs` cannot get as far as its first screen.
-//
+// Scripts.foreach(collection, callback, this = void) and Scripts.getObjectKeys.
 // Why the engine has to provide them at all: TJS2 has no `for (var x in obj)`
 // statement, so enumerating an object's members is only possible through
 // `iTJSDispatch2::EnumMembers`, and arrays do not even implement that (see
@@ -180,7 +173,7 @@ struct ScriptsExt {
 
 } // namespace
 
-#define NCB_MODULE_NAME TJS_W("bevy_scripts.dll")
+#define NCB_MODULE_NAME TJS_W("yz_scripts_ext.dll")
 
 NCB_ATTACH_CLASS(ScriptsExt, Scripts) {
     RawCallback("foreach", &ScriptsExt::foreach, TJS_STATICMEMBER);
