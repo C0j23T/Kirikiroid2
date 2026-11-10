@@ -1,8 +1,5 @@
-#include <stdio.h>
-#include <list>
-#include <map>
-
-using namespace std;
+#include <cmath>
+#include <algorithm>
 
 #define NCB_MODULE_NAME TJS_W("perspective.dll")
 
@@ -19,132 +16,9 @@ static const char *copyright =
 
 #include "ncbind/ncbind.hpp"
 
-#include "LayerExBase.h"
 #include "LayerImpl.h"
 #include "tjsNative.h"
 #include "RenderManager.h"
-#if 0
-/**
- * 透視変換コピー
- * @param src
- * @param sleft
- * @param stop
- * @param swidth
- * @param sheight
- * @param x1 左上隅
- * @param y1
- * @param x2 右上隅
- * @param y2
- * @param x3 左下隅
- * @param y3
- * @param x4 右下隅
- * @param y4
- */
-class tPerspectiveCopy : public tTJSDispatch
-{
-protected:
-public:
-	tjs_error TJS_INTF_METHOD FuncCall(
-		tjs_uint32 flag, const tjs_char * membername, tjs_uint32 *hint,
-		tTJSVariant *result,
-		tjs_int numparams, tTJSVariant **param, iTJSDispatch2 *objthis) {
-
-		if (numparams < 13) return TJS_E_BADPARAMCOUNT;
-
-		NI_LayerExBase *dest;
-		if ((dest = NI_LayerExBase::getNative(objthis)) == NULL) return TJS_E_NATIVECLASSCRASH;
-		dest->reset(objthis);
-		
-		NI_LayerExBase *src;
-		if ((src = NI_LayerExBase::getNative(param[0]->AsObjectNoAddRef())) == NULL) return TJS_E_NATIVECLASSCRASH;
-		src->reset(param[0]->AsObjectNoAddRef());
-		
-		double g_x1 = param[1]->AsReal();
-		double g_y1 = param[2]->AsReal();
-		double g_x2 = g_x1 + param[3]->AsReal();
-		double g_y2 = g_y1 + param[4]->AsReal();
-
-		double quad[8];
-        quad[0] = param[5]->AsReal(); // 左上
-        quad[1] = param[6]->AsReal();
-        quad[2] = param[7]->AsReal(); // 右上
-        quad[3] = param[8]->AsReal();
-		quad[4] = param[11]->AsReal(); // 右下
-        quad[5] = param[12]->AsReal(); 
-        quad[6] = param[9]->AsReal(); // 左下
-        quad[7] = param[10]->AsReal();
-
-
-		{
-			/// ソースの準備
-			unsigned char *buffer = src->_buffer;
-			// AGG 用に先頭位置に補正
-			if (src->_pitch < 0) {
-				buffer += int(src->_height - 1) * src->_pitch;
-			}
-
-			typedef agg::image_accessor_clip<pixfmt> source_type;
-			agg::rendering_buffer rbufs(buffer, src->_width, src->_height, src->_pitch);
-            pixfmt pixbuf(rbufs);
-			source_type rbuf_src(pixbuf, agg::rgba_pre(0, 0, 0, 0)/*buffer, src->_width, src->_height, src->_pitch*/);
-
-			/// レンダリング用バッファ
-			buffer = dest->_buffer;
-			// AGG 用に先頭位置に補正
-			if (dest->_pitch < 0) {
-				buffer += int(dest->_height - 1) * dest->_pitch;
-			}
-			agg::rendering_buffer rbuf(buffer, dest->_width, dest->_height, dest->_pitch);
-
-			// レンダラの準備
-			pixfmt_pre  pixf_pre(rbuf);
-			renderer_base_pre rb_pre(pixf_pre);
-			
-			g_rasterizer.clip_box(0, 0, dest->_width, dest->_height);
-			g_rasterizer.reset();
-			g_rasterizer.move_to_d(quad[0], quad[1]);
-			g_rasterizer.line_to_d(quad[2], quad[3]);
-			g_rasterizer.line_to_d(quad[4], quad[5]);
-			g_rasterizer.line_to_d(quad[6], quad[7]);
-			
-			// 変形コピー
-			agg::trans_perspective tr(quad, g_x1, g_y1, g_x2, g_y2);
-			//if(tr.is_valid())
-			{
-				typedef agg::span_interpolator_linear<agg::trans_perspective> interpolator_type;
-				typedef agg::span_subdiv_adaptor<interpolator_type> subdiv_adaptor_type;
-				interpolator_type interpolator(tr);
-				subdiv_adaptor_type subdiv_adaptor(interpolator);
-
-				typedef agg::span_image_filter_rgba_2x2</*color_type*/source_type,
-				//agg::order_bgra,
-				subdiv_adaptor_type> span_gen_type;
-				typedef agg::span_allocator<agg::rgba8> span_alloc_type;
-				typedef agg::renderer_scanline_aa<renderer_base_pre, span_alloc_type, span_gen_type> renderer_type;
-
-				span_alloc_type sa;
-				agg::image_filter_hermite filter_kernel;
-				agg::image_filter_lut filter(filter_kernel, false);
-				
-				span_gen_type sg(//sa, 
-								 rbuf_src, 
-								 //agg::rgba_pre(0, 0, 0, 0),
-								 subdiv_adaptor,
-								 filter);
-				
-				renderer_type ri(rb_pre, sa, sg);
-				agg::render_scanlines(g_rasterizer, g_scanline, ri);
-			}
-
-		}
-
-		dest->redraw(objthis);
-		return TJS_S_OK;
-	}
-};
-#endif
-static int TJS_NATIVE_CLASSID_NAME = -1;
-
 static tjs_error PerspectiveCopy_GL( tTJSVariant *result, 
     tjs_int numparams, tTJSVariant **param,	iTJSDispatch2 *objthis)
 {
@@ -161,12 +35,16 @@ static tjs_error PerspectiveCopy_GL( tTJSVariant *result,
 
     tTJSNI_BaseLayer * src = NULL;
     tTJSVariantClosure clo = param[0]->AsObjectClosureNoAddRef();
+    if(!clo.Object) TVPThrowExceptionMessage(TVPSpecifyLayer);
     if(clo.Object)
     {
         if(TJS_FAILED(clo.Object->NativeInstanceSupport(TJS_NIS_GETINSTANCE,
             tTJSNC_Layer::ClassID, (iTJSNativeInstance**)&src)))
             TVPThrowExceptionMessage(TVPSpecifyLayer);
     }
+
+    if (!src->GetMainImage() || !_this->GetMainImage()) TVPThrowExceptionMessage(TJS_W("Layer has no image"));
+    _this->IndependMainImage();
 
     double g_x1 = param[1]->AsReal();
     double g_y1 = param[2]->AsReal();
@@ -192,88 +70,30 @@ static tjs_error PerspectiveCopy_GL( tTJSVariant *result,
 	tRenderTexQuadArray::Element src_tex[] = {
 		tRenderTexQuadArray::Element(tex, srcpt)
 	};
-	int w = _this->GetMainImage()->GetWidth(), h = _this->GetMainImage()->GetHeight();
-	tTVPRect rctar(w, h, 0, 0);
-	for (int i = 0; i < 4; ++i) {
-		if (rctar.left > dstpt[i].x) rctar.left = dstpt[i].x;
-		if (rctar.top > dstpt[i].y) rctar.top = dstpt[i].y;
-		if (rctar.right < dstpt[i].x) rctar.right = dstpt[i].x;
-		if (rctar.bottom < dstpt[i].y) rctar.bottom = dstpt[i].y;
-	}
-	if (rctar.left < 0) rctar.left = 0;
-	if (rctar.top < 0) rctar.top = 0;
-	if (rctar.right > w) rctar.right = w;
-	if (rctar.bottom > h) rctar.bottom = h;
-	TVPGetRenderManager()->OperatePerspective(method, 1,
+    auto clip = _this->GetClip();
+    clip.clip(tTVPRect(0, 0, _this->GetMainImage()->GetWidth(), _this->GetMainImage()->GetHeight()));
+    double left = dstpt[0].x, top = dstpt[0].y, right = left, bottom = top;
+    for (auto &p : srcpt) if (!std::isfinite(p.x) || !std::isfinite(p.y))
+        TVPThrowExceptionMessage(TJS_W("Invalid perspective source coordinate"));
+    for (auto &p : dstpt) {
+        if (!std::isfinite(p.x) || !std::isfinite(p.y))
+            TVPThrowExceptionMessage(TJS_W("Invalid perspective coordinate"));
+        left = std::min(left, p.x); top = std::min(top, p.y);
+        right = std::max(right, p.x); bottom = std::max(bottom, p.y);
+    }
+    if (clip.is_empty() || left >= clip.right || top >= clip.bottom || right <= clip.left || bottom <= clip.top)
+        return TJS_S_OK;
+    tTVPRect rctar(std::max(left, double(clip.left)), std::max(top, double(clip.top)),
+                  std::min(std::ceil(right), double(clip.right)), std::min(std::ceil(bottom), double(clip.bottom)));
+    TVPGetRenderManager()->OperatePerspective(method, 1,
 		_this->GetMainImage()->GetTextureForRender(method->IsBlendTarget(), &rctar), nullptr, rctar, dstpt,
 		tRenderTexQuadArray(src_tex));
-	_this->Update();
+	_this->SetImageModified(true);
+    _this->Update();
     return TJS_S_OK;
 }
 
-static void
-addMethod(iTJSDispatch2 *dispatch, const tjs_char *methodName, tTJSDispatch *method)
-{
-	tTJSVariant var = tTJSVariant(method);
-	method->Release();
-	dispatch->PropSet(
-		TJS_MEMBERENSURE, // メンバがなかった場合には作成するようにするフラグ
-		methodName, // メンバ名 ( かならず TJS_W( ) で囲む )
-		NULL, // ヒント ( 本来はメンバ名のハッシュ値だが、NULL でもよい )
-		&var, // 登録する値
-		dispatch // コンテキスト
-		);
+struct Perspective {};
+NCB_ATTACH_CLASS(Perspective, Layer) {
+    RawCallback("perspectiveCopy", PerspectiveCopy_GL, 0);
 }
-
-static void
-delMethod(iTJSDispatch2 *dispatch, const tjs_char *methodName)
-{
-	dispatch->DeleteMember(
-		0, // フラグ ( 0 でよい )
-		methodName, // メンバ名
-		NULL, // ヒント
-		dispatch // コンテキスト
-		);
-}
-
-//---------------------------------------------------------------------------
-void InitPlugin_Perspective()
-{
-// 	if (TVPGetRenderManager()->IsSoftware()) {
-// 	    TVPAddImportantLog(ttstr(copyright));
-// 	
-// 	    // クラスオブジェクトチェック
-// 	    if ((NI_LayerExBase::classId = TJSFindNativeClassID(TJS_W("LayerExBase"))) <= 0) {
-// 		    NI_LayerExBase::classId = TJSRegisterNativeClass(TJS_W("LayerExBase"));
-// 	    }
-// 	
-// 	    {
-// 		    // TJS のグローバルオブジェクトを取得する
-// 		    iTJSDispatch2 * global = TVPGetScriptDispatch();
-// 
-// 		    // Layer クラスオブジェクトを取得
-// 		    tTJSVariant varScripts;
-// 		    TVPExecuteExpression(TJS_W("Layer"), &varScripts);
-// 		    iTJSDispatch2 *dispatch = varScripts.AsObjectNoAddRef();
-// 		    if (dispatch) {
-// 			    // プロパティ初期化
-// 			    NI_LayerExBase::init(dispatch);
-// 
-// 			    // 専用メソッドの追加
-// 			    addMethod(dispatch, TJS_W("perspectiveCopy"), new tPerspectiveCopy());
-// 		    }
-// 
-// 		    global->Release();
-// 	    }
-//     } else {
-        iTJSDispatch2 * global = TVPGetScriptDispatch();
-        tTJSVariant varScripts;
-        global->PropGet(0, TJS_W("Layer"), nullptr, &varScripts, global);
-        iTJSDispatch2 *dispatch = varScripts.AsObjectNoAddRef();
-        if (dispatch) {
-            addMethod(dispatch, TJS_W("perspectiveCopy"), TJSCreateNativeClassMethod(PerspectiveCopy_GL));
-        }
-    //}
-}
-
-NCB_PRE_REGIST_CALLBACK(InitPlugin_Perspective);
