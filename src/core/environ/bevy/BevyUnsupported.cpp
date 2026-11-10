@@ -1,14 +1,3 @@
-// bevy port: subsystems that bevy_krkr deliberately does not take from the
-// Kirikiroid2 core. Each entry point fails with a clear message (or is a
-// harmless no-op) instead of being silently missing.
-//
-//  - Window / input / menus / file dialogs: owned by the Bevy host. Scripts
-//    render into BitmapLayerTreeOwner layers; the host reads their pixels.
-//  - Sound output: entirely BevySound.cpp's, which mixes the engine's buffers
-//    for the host's device to pull (WaveMixer.cpp/SDL is not built).
-//  - Video playback (ffmpeg/movie): not built.
-//  - BPG / JXR / PVRv3 images: their libraries are not vendored in this
-//    checkout. PNG, JPEG, WEBP, TLG, BMP and XP3/TAR/7z/ZIP work.
 #include "tjsCommHead.h"
 
 #include <functional>
@@ -23,10 +12,7 @@
 
 class tTJSNI_Window;
 class tTJSNI_MenuItem;
-class tTJSNI_VideoOverlay;
-class iTVPVideoOverlay;
 class iWindowLayer;
-struct IStream;
 
 [[noreturn]] static void TVPBevyUnsupported(const tjs_char *what) {
     TVPThrowExceptionMessage(TJS_W("%1 is not supported by the bevy_krkr port"), ttstr(what));
@@ -72,18 +58,6 @@ bool tRisaPhaseVocoderDSP::GetInputBuffer(size_t, float *&, size_t &, float *&, 
 size_t tRisaPhaseVocoderDSP::GetOutputReadySize() { return 0; }
 bool tRisaPhaseVocoderDSP::GetOutputBuffer(size_t, const float *&, size_t &, const float *&, size_t &) { return false; }
 tRisaPhaseVocoderDSP::tStatus tRisaPhaseVocoderDSP::Process() { return psNoError; }
-
-// ─── video ──────────────────────────────────────────────────────────────────
-
-#define TVP_BEVY_NO_VIDEO(fn)                                                                  \
-    void fn(tTJSNI_VideoOverlay *, IStream *, const tjs_char *, const tjs_char *, uint64_t,     \
-            iTVPVideoOverlay **) {                                                             \
-        TVPBevyUnsupported(TJS_W("VideoOverlay"));                                             \
-    }
-TVP_BEVY_NO_VIDEO(GetVideoOverlayObject)
-TVP_BEVY_NO_VIDEO(GetVideoLayerObject)
-TVP_BEVY_NO_VIDEO(GetMixingVideoOverlayObject)
-TVP_BEVY_NO_VIDEO(GetMFVideoOverlayObject)
 
 // ─── image formats without a vendored library ───────────────────────────────
 

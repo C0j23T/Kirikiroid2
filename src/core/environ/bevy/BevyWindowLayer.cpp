@@ -304,3 +304,8 @@ void TVPBevyResetWindows() {
     // through `InvalidateClose`, this only guards against a leftover entry.
     Windows.clear();
 }
+
+void *TVPBevyFrontWindow() {
+    auto window = FrontWindow();
+    return window ? window->GetWindow() : nullptr;
+}

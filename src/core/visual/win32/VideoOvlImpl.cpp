@@ -155,7 +155,7 @@ void tTJSNI_VideoOverlay::Open(const ttstr &_name)
 	}
 
 	IStream *istream = NULL;
-	long size;
+	uint64_t size;
 	ttstr ext = TVPExtractStorageExt(name).c_str();
 	ext.ToLowerCase();
 
@@ -165,7 +165,7 @@ void tTJSNI_VideoOverlay::Open(const ttstr &_name)
 		try
 		{
 			stream0 = TVPCreateStream(name);
-			size = (long)stream0->GetSize();
+			size = stream0->GetSize();
 		}
 		catch(...)
 		{
@@ -254,6 +254,10 @@ void tTJSNI_VideoOverlay::Close()
 		}
 		VideoOverlay->SetVisible(false);
 		VideoOverlay->Pause();
+#ifdef KRKR_BEVY_PORT
+		VideoOverlay->SetWindow(nullptr);
+#endif
+		if (Mode == vomLayer) VideoOverlay->SetVideoBuffer(nullptr, nullptr, 0);
 		CachedOverlay = VideoOverlay;
 		VideoOverlay = NULL;
 //		::SetFocus(Window->GetWindowHandle());
@@ -288,6 +292,9 @@ void tTJSNI_VideoOverlay::Shutdown()
 			}
 			VideoOverlay->SetVisible(false);
 			VideoOverlay->Pause();
+#ifdef KRKR_BEVY_PORT
+			VideoOverlay->SetWindow(nullptr);
+#endif
 			CachedOverlay = VideoOverlay;
 			VideoOverlay = NULL;
 		}
@@ -576,7 +583,7 @@ void tTJSNI_VideoOverlay::WndProc( NativeEvent& ev )
 						}
 						break;
 					case EC_UPDATE:
-						if( Mode == vomLayer && Status == ssPlay )
+						if( Mode == vomLayer && (Status == ssPlay || Status == ssPause) )
 						{
 							int		curFrame = (int)ev.LParam;
 							if( Layer1 == NULL && Layer2 == NULL )	// nothing to do.
