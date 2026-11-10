@@ -3,6 +3,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -113,7 +114,28 @@ int krkr_png_encode(const void *pixels, size_t pixelsLen, unsigned width,
 	unsigned height, int bpp, void **png, size_t *pngLen);
 void krkr_png_free(void *png, size_t pngLen);
 
-// zlib streams, for XP3, TextStream and the ZLIB_* plugin functions. `bound`
+// Complete image exports. format: 0 RGBA PNG, 1 RGBA TLG5, 2 indexed Province PNG.
+typedef struct KrkrSaveOptions {
+    unsigned format;
+    int level;
+    KrkrPngInfo meta;
+    const void *tags;
+    size_t tags_len;
+} KrkrSaveOptions;
+int krkr_save_image_encode(const void *pixels, size_t length, unsigned width, unsigned height,
+    const KrkrSaveOptions *options, void **out, size_t *out_len);
+unsigned long long krkr_save_image_start(const void *pixels, size_t length, unsigned width, unsigned height,
+    const KrkrSaveOptions *options);
+// 0 pending, 1 complete, 2 canceled, -1 failure. Output uses krkr_png_free.
+int krkr_save_image_poll(unsigned long long id, int *progress, void **out, size_t *length);
+void krkr_save_image_cancel(unsigned long long id, int stop);
+
+int krkr_image_operation(unsigned op, void *pixels, size_t length, unsigned width, unsigned height,
+    const void *base, size_t base_length, unsigned base_width, unsigned base_height,
+    const int64_t *params, int64_t *values, void **out, size_t *out_length);
+int krkr_octet_vector_sum(const void *a, size_t length, const void *b, size_t b_length, int64_t *values);
+
+// zlib streams, for XP3, TextStream, LayerExSave and the ZLIB_* plugin functions. `bound`
 // is the most `compress` can write for that many input bytes; the other two
 // return the bytes written, or SIZE_MAX.
 size_t krkr_zlib_bound(size_t srcLen);

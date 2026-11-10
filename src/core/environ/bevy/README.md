@@ -46,8 +46,10 @@ Changes to upstream files:
   `subsampling`/`dct`/`progressive` save options;
 - `base/XP3Archive.cpp`, `base/TextStream.cpp`, `msg/win32/OptionsDesc.cpp`,
   `base/win32/PluginImpl.cpp`: zlib's one-shot calls go through
-  `krkr_zlib_*` (`miniz_oxide`), so zlib is not linked. The compressed text
-  stream holds its text and compresses it when it closes, instead of streaming
+  `krkr_zlib_*` (`miniz_oxide`), so zlib is not linked. LayerExSave delegates
+  PNG/TLG5 encoding and background tasks to Rust through `krkr_save_image_*`;
+  PNG uses the existing Rust `png` crate. The compressed text stream holds its
+  text and compresses it when it closes, instead of streaming
   through a deflate state;
 - `sound/VorbisWaveDecoder.cpp`: the Opus decoder moved to
   `sound/OpusWaveDecoder.cpp`, which compiles it only under `KRKR_BEVY_OPUS`
