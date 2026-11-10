@@ -15,5 +15,7 @@ void TVPUnloadInternalPlugins()
 
 bool TVPLoadInternalPlugin(const ttstr &_name)
 {
-	return ncbAutoRegister::LoadModule(TVPExtractStorageName(_name));
+	auto name = TVPExtractStorageName(_name).AsLowerCase();
+	if(name == TJS_W("layerextext.dll")) name = TJS_W("layerExDraw.dll");
+	return ncbAutoRegister::LoadModule(name);
 }

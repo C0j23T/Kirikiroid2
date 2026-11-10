@@ -223,6 +223,10 @@ void FreeTypeFontRasterizer::GetGlyphDrawRect( const ttstr & text, tTVPRect& are
 		tjs_int ax, ay;
 		tTVPRect rt(0,0,0,0);
 		bool result = Face->GetGlyphRectFromCharcode(rt,ch,ax,ay);
+		if(!result && !isUnicodeSpace(ch)) {
+			ApplyFallbackFace();
+			if(FaceFallback) result = FaceFallback->GetGlyphRectFromCharcode(rt,ch,ax,ay);
+		}
 		if( result == false ) result = Face->GetGlyphRectFromCharcode(rt,Face->GetDefaultChar(),ax,ay);
 		if( result == false ) result = Face->GetGlyphRectFromCharcode(rt,Face->GetFirstChar(),ax,ay);
 		if( result ) {
