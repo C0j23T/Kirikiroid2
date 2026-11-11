@@ -3,6 +3,9 @@
 #pragma once
 #include "TransIntf.h"
 #include "BevyRender.h"
+#include "ExtransGeometry.h"
+#include "ExtransTurnTable.h"
+#include <memory>
 #include <algorithm>
 #include <cmath>
 #include <vector>
@@ -17,6 +20,8 @@ class Handler : public iTVPDivisibleTransHandler {
     tjs_uint64 duration, start=0, elapsed=0;
     bool first=true;
     double values[9]{};
+    std::unique_ptr<RotateGeometry> rotation;
+    std::vector<std::array<int32_t,4>> geometry;
 public:
     Handler(int effect, int width, int height, int layer, tjs_uint64 duration, iTVPSimpleOptionProvider *o)
         : effect(effect), width(width), height(height), layer(layer), duration(duration) {
@@ -26,7 +31,7 @@ public:
             values[3]=option(o,TJS_W("bgcolor1"),0); values[4]=option(o,TJS_W("bgcolor2"),0);
             if(values[2]<0 || values[2]>2) TVPThrowExceptionMessage(TJS_W("Invalid wavetype"));
         } else if(effect==1) values[0]=std::max(2.,option(o,TJS_W("maxsize"),30));
-        else {
+        else if(effect==100) {
             values[0]=option(o,TJS_W("exponent"),1); if(values[0]<=0) values[0]=1;
             double b1=option(o,TJS_W("blur1"),0), b2=option(o,TJS_W("blur2"),0);
             values[1]=option(o,TJS_W("blur1x"),b1); values[2]=option(o,TJS_W("blur1y"),b1);
@@ -34,18 +39,33 @@ public:
             for(int i=1;i<=4;i++) if(values[i]<0 || values[i]>=(i%2 ? width : height)/2) values[i]=0;
             values[5]=option(o,TJS_W("type"),0); values[6]=option(o,TJS_W("prerender"),0);
             if(values[5]!=0 && values[5]!=1) TVPThrowExceptionMessage(TJS_W("Invalid blurfade type"));
-            if(values[6]!=0) TVPThrowExceptionMessage(TJS_W("blurfade prerender requires 0"));
+            if(values[6]<0 || values[6]>2) TVPThrowExceptionMessage(TJS_W("Invalid blurfade prerender"));
+        } else if(effect==2 || effect==5) {
+            values[0]=option(o,TJS_W("bgcolor"),0); values[1]=option(o,TJS_W("twist"),effect==2?0:1);
+        } else if(effect==3 || effect==4) {
+            values[0]=option(o,TJS_W("factor"),effect==3?1:0); values[1]=option(o,TJS_W("accel"),effect==3?0:2);
+            values[2]=option(o,TJS_W("twist"),2); values[3]=option(o,TJS_W("twistaccel"),effect==3?-2:2);
+            values[4]=option(o,TJS_W("centerx"),width/2); values[5]=option(o,TJS_W("centery"),height/2);
+        } else if(effect==6) {
+            values[0]=option(o,TJS_W("centerx"),width/2); values[1]=option(o,TJS_W("centery"),height/2);
+            values[2]=option(o,TJS_W("rwidth"),128); values[3]=option(o,TJS_W("roundness"),1);
+            values[4]=option(o,TJS_W("speed"),6); values[5]=option(o,TJS_W("maxdrift"),24);
+            if(values[0]<0 || values[0]>=width || values[1]<0 || values[1]>=height) TVPThrowExceptionMessage(TJS_W("ripple center is outside the image"));
+            if(values[2]!=16 && values[2]!=32 && values[2]!=64 && values[2]!=128) TVPThrowExceptionMessage(TJS_W("Invalid ripple width"));
         }
         if(effect==0 && (std::abs(values[0])>1000000 || std::abs(values[1])>1000000)) TVPThrowExceptionMessage(TJS_W("Wave option is out of range"));
         if(effect==1 && values[0]>1000000) TVPThrowExceptionMessage(TJS_W("Mosaic maxsize is out of range"));
         for(double v:values) if(!std::isfinite(v)) TVPThrowExceptionMessage(TJS_W("Nonfinite transition option"));
+        if(effect>=3 && effect<=5) rotation=std::make_unique<RotateGeometry>(width,height);
     }
     tjs_error TJS_INTF_METHOD AddRef() override { ++refs; return TJS_S_OK; }
     tjs_error TJS_INTF_METHOD Release() override { if(!--refs) delete this; return TJS_S_OK; }
     tjs_error TJS_INTF_METHOD SetOption(iTVPSimpleOptionProvider *) override { return TJS_S_OK; }
     tjs_error TJS_INTF_METHOD StartProcess(tjs_uint64 tick) override {
         if(first) { first=false; start=tick; }
-        elapsed=tick<start ? 0 : std::min(tick-start,duration); return TJS_S_TRUE;
+        elapsed=tick<start ? 0 : std::min(tick-start,duration);
+        if(rotation) geometry=rotation->Build(effect,duration,elapsed,values);
+        return TJS_S_TRUE;
     }
     tjs_error TJS_INTF_METHOD EndProcess() override { return elapsed==duration ? TJS_S_FALSE : TJS_S_TRUE; }
     tjs_error TJS_INTF_METHOD MakeFinalImage(iTVPScanLineProvider **d,iTVPScanLineProvider *,iTVPScanLineProvider *s) override { *d=s; return TJS_S_OK; }
@@ -81,10 +101,35 @@ public:
             c.parameters[4]=size;
             int ox=(width-size)/2-(width/2/size)*size, oy=(height-size)/2-(height/2/size)*size;
             c.parameters[5]=ox>0 ? ox-size : ox; c.parameters[6]=oy>0 ? oy-size : oy;
-        } else {
+        } else if(effect==100) {
             c.method="ExtraBlurFade"; f=std::pow(f,values[0]); c.parameters[0]=int(f*255+0.5);
             for(int i=1;i<=4;i++) c.parameters[3+i]=int(values[i]*(i<3 ? f : 1-f)+0.5);
             c.parameters[8]=values[5];
+        } else if(effect==2) {
+            c.method="ExtraTurn";
+            int nx=(width+63)/64, ny=(height+63)/64;
+            c.parameters[4]=int(elapsed*(64+(nx+ny)*2)/duration)-ny*2;
+            c.data=const_cast<std::array<int32_t,4>*>(TurnTable); c.pitch=sizeof(TurnTable)/sizeof(TurnTable[0]);
+        } else if(effect==3 || effect==4 || effect==5) {
+            c.method="ExtraRotate";
+            c.data=geometry.data(); c.pitch=geometry.size();
+        } else if(effect==101 || effect==102) {
+            c.method="ExtraNagano"; c.parameters[4]=effect-100; c.parameters[5]=f;
+        } else if(effect==6) {
+            c.method="ExtraRipple"; c.parameters[4]=f;
+            c.parameters[5]=values[0]; c.parameters[6]=values[1]; c.parameters[7]=values[2];
+            c.parameters[8]=values[3]; c.parameters[9]=values[4]; c.parameters[10]=values[5];
+        } else {
+            c.method="ExtraRipple"; c.parameters[4]=f;
+        }
+        if(effect>=2 && effect<=5) {
+            c.parameters[2]=d->Left; c.parameters[3]=d->Top;
+            c.parameters[5]=width; c.parameters[6]=height;
+            tjs_uint32 bg=(effect==2 || effect==5)?tjs_uint32(values[0]):0;
+            for(int i=0;i<4;i++) {
+                int shift=i==0?16:i==1?8:i==2?0:24;
+                c.parameters[12+i]=float((bg>>shift)&255)/255;
+            }
         }
         return krkr_render_dispatch(&c)==0 ? TJS_S_OK : TJS_E_FAIL;
     }

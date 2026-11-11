@@ -1,9 +1,11 @@
 #define NCB_MODULE_NAME TJS_W("extNagano.dll")
 #include "ncbind/ncbind.hpp"
 #include "ExtraTrans.h"
-static BevyExtraTrans::Provider *providers[1]{};
+static BevyExtraTrans::Provider *providers[3]{};
 static void registerProviders() {
-    providers[0]=new BevyExtraTrans::Provider(2,TJS_W("blurfade")); TVPAddTransHandlerProvider(providers[0]);
+    const int effects[]={100,101,102};
+    const tjs_char *names[]={TJS_W("blurfade"),TJS_W("book"),TJS_W("morphing")};
+    for(int i=0;i<3;i++) { providers[i]=new BevyExtraTrans::Provider(effects[i],names[i]); TVPAddTransHandlerProvider(providers[i]); }
 }
 static void unregisterProviders() {
     for(auto &p:providers) { if(p) { TVPRemoveTransHandlerProvider(p); p->Release(); p=nullptr; } }
