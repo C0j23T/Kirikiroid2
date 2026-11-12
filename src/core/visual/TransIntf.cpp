@@ -21,6 +21,7 @@
 #include "DebugIntf.h"
 #include "RenderManager.h"
 #include "Platform.h"
+#include <vector>
 
 // #define TVP_TRANS_SHOW_FPS
 
@@ -785,6 +786,54 @@ public:
 
 };
 //---------------------------------------------------------------------------
+//--------------------------------------------------------------------------
+// The rule graphic of a "universal" transition is identified only by its name
+// and the layer size, and loading it decodes it and copies it through a texture,
+// which costs milliseconds on the thread that starts the transition. Transitions
+// reuse the same rule, so the loaded copy is kept.
+//--------------------------------------------------------------------------
+struct tTVPUniversalRule
+{
+        ttstr Name;
+        tjs_uint Width, Height;
+        iTVPScanLineProvider *Graphic;
+};
+static std::vector<tTVPUniversalRule> UniversalRules;
+// A rule is the layer size at 8bpp, so a handful covers what a game uses without
+// holding much memory.
+static const size_t UniversalRuleLimit = 4;
+
+static void TVPClearUniversalRules()
+{
+        for(auto &rule : UniversalRules) rule.Graphic->Release();
+        UniversalRules.clear();
+}
+static tTVPAtExit TVPUninitUniversalRules(TVP_ATEXIT_PRI_RELEASE, TVPClearUniversalRules);
+
+// Returns a new reference to the rule graphic, loading it once per name and size.
+static iTVPScanLineProvider * TVPLoadUniversalRule(iTVPSimpleImageProvider *imagepro,
+                const tjs_char *name, tjs_uint width, tjs_uint height)
+{
+        for(auto &rule : UniversalRules)
+                if(rule.Width == width && rule.Height == height && rule.Name == name)
+                {
+                        rule.Graphic->AddRef();
+                        return rule.Graphic;
+                }
+        iTVPScanLineProvider *graphic = 0;
+        if(TJS_FAILED(imagepro->LoadImage(name, 8, 0x02ffffff, width, height, &graphic)) ||
+                        !graphic)
+                return 0;
+        if(UniversalRules.size() >= UniversalRuleLimit)
+        {
+                UniversalRules.front().Graphic->Release();
+                UniversalRules.erase(UniversalRules.begin());
+        }
+        UniversalRules.push_back({name, width, height, graphic});
+        graphic->AddRef();
+        return graphic;
+}
+
 class tTVPUniversalTransHandlerProvider : public tTVPCrossFadeTransHandlerProvider
 {
 public:
@@ -826,10 +875,9 @@ public:
 		er = options->GetAsString(TJS_W("rule"), &rulename);
 		if(TJS_FAILED(er)) TVPThrowExceptionMessage(TVPSpecifyOption, TJS_W("rule"));
 
-		iTVPScanLineProvider *scpro;
-		er = imagepro->LoadImage(rulename, 8, 0x02ffffff,
-			src1w, src1h, &scpro);
-		if(TJS_FAILED(er))
+iTVPScanLineProvider *scpro =
+                        TVPLoadUniversalRule(imagepro, rulename, src1w, src1h);
+                if(!scpro)
 			TVPThrowExceptionMessage(TVPCannotLoadRuleGraphic, rulename);
 
 		// create a transition object

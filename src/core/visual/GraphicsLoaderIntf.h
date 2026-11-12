@@ -275,6 +275,13 @@ extern int TVPLoadGraphic(iTVPBaseBitmap *dest, const ttstr &name, tjs_int keyid
 extern void TVPLoadGraphicProvince(tTVPBaseBitmap *dest, const ttstr &name, tjs_int keyidx,
 	tjs_uint desw, tjs_uint desh);
 
+// Decodes a stored image to ARGB pixels without creating, uploading or reading
+// back a texture. `desw`/`desh` request a size like TVPLoadGraphic does; 0 keeps
+// the file's own size. Returns false when the image cannot be decoded.
+extern bool TVPLoadGraphicPixels(const ttstr &name, tjs_int keyidx,
+	tjs_uint desw, tjs_uint desh,
+	std::vector<tjs_uint32> *pixels, tjs_int *width, tjs_int *height);
+
 
 //---------------------------------------------------------------------------
 // BMP loading interface

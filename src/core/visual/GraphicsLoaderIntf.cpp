@@ -1647,7 +1647,7 @@ bool TVPCheckImageCache( const ttstr& nname, tTVPBaseBitmap* dest, tTVPGraphicLo
 	return false;
 }
 //---------------------------------------------------------------------------
-// ŒŸõ‚¾‚¯‚·‚é
+// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
 bool TVPHasImageCache( const ttstr& nname, tTVPGraphicLoadMode mode, tjs_uint dw, tjs_uint dh, tjs_int32 keyidx )
 {
 	tjs_uint32 hash;
@@ -1879,6 +1879,38 @@ static tTVPBitmap* TVPInternalLoadBitmap(const ttstr &_name,
 	}
 
 	return data.Dest;
+}
+//---------------------------------------------------------------------------
+bool TVPLoadGraphicPixels(const ttstr &name, tjs_int keyidx,
+	tjs_uint desw, tjs_uint desh,
+	std::vector<tjs_uint32> *pixels, tjs_int *width, tjs_int *height)
+{
+	std::vector<tTVPGraphicMetaInfoPair> *metainfo = NULL;
+	tTVPBitmap *bitmap = NULL;
+	try {
+		bitmap = TVPInternalLoadBitmap(TVPNormalizeStorageName(name), keyidx, desw,
+			(tjs_int)desh, &metainfo, glmNormal, NULL);
+	} catch(...) {
+		delete metainfo;
+		return false;
+	}
+	delete metainfo;
+	if(!bitmap) return false;
+
+	const tjs_int w = (tjs_int)bitmap->GetWidth();
+	const tjs_int h = (tjs_int)bitmap->GetHeight();
+	const bool usable = bitmap->GetBPP() == 32 && w > 0 && h > 0;
+	if(usable) {
+		pixels->resize((size_t)w * h);
+		for(tjs_int y = 0; y < h; y++) {
+			const tjs_uint32 *src = (const tjs_uint32 *)bitmap->GetScanLine(y);
+			memcpy(&(*pixels)[(size_t)y * w], src, sizeof(tjs_uint32) * w);
+		}
+		*width = w;
+		*height = h;
+	}
+	bitmap->Release();
+	return usable;
 }
 //---------------------------------------------------------------------------
 iTVPTexture2D* TVPLoadPVRv3(tTJSBinaryStream *s, const std::function<void(const ttstr&, const tTJSVariant&)> &cb);

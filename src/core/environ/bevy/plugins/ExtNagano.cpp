@@ -7,6 +7,7 @@
 #include "TransIntf.h"
 #include "RenderManager.h"
 #include "LayerIntf.h"
+#include "GraphicsLoaderIntf.h"
 #include "BevyRender.h"
 #include <cmath>
 #include <cstdlib>
@@ -14,8 +15,30 @@
 #include <vector>
 #include <array>
 #include <algorithm>
+#include <condition_variable>
+#include <deque>
+#include <map>
+#include <mutex>
+#include <thread>
 namespace Nagano {
 using Records = std::vector<std::array<float,4>>;
+
+// Rule images are decoded on a worker thread (the transition holds at phase 0
+// until the pixels arrive), so a handler that samples one has to ask whether
+// they are there yet.
+class iTVPPendingRule
+{
+public:
+	virtual ~iTVPPendingRule() {}
+	virtual bool Ready() = 0;
+	virtual void Poll() = 0;
+};
+namespace Universal {
+// Connects a handler to the decoder; the provider itself is defined with the
+// 3D universal handler, which is the only user of the decoded pixels as texture.
+iTVPScanLineProvider *CreatePendingRuleProvider(const ttstr &name, tjs_uint desh,
+	iTVPPendingRule **pending);
+}
 inline tjs_error Draw(tTVPDivisibleData *d,int w,int h,int kind,std::array<float,8> v={},const Records &records={},uint64_t rule=0) {
  TVPBevyRenderCommand c{}; c.operation=4; c.method="ExtraNagano";
  c.target=TVPBevyTextureID(d->Dest->GetTextureForRender());
@@ -1136,17 +1159,18 @@ protected:
 	tjs_int RuleWidth;
 	tjs_int RuleHeight;
 	tjs_int *RuleEdge;
+	iTVPPendingRule *Decoding;
 	void Setup();
+	bool EnsureRule();
 public:
 	tTVPImageWipeTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
-			iTVPScanLineProvider *rule, tjs_int dir)
+			iTVPScanLineProvider *rule, iTVPPendingRule *decoding, tjs_int dir)
 		: StartTick(0), Time(time), Width(width), Height(height),
-		  Elapsed(0), Threshold(0), Rule(rule), Dir(dir), First(true),
+		  Elapsed(0), Threshold(0), Rule(rule), Decoding(decoding), Dir(dir), First(true),
 		  FrameCount(0), RuleWidth(0), RuleHeight(0), RuleEdge(NULL)
 	{
 		RefCount = 1;
 		if(Rule) Rule->AddRef();
-		Setup();
 	}
 	virtual ~tTVPImageWipeTransHandler()
 	{
@@ -1195,6 +1219,19 @@ void tTVPImageWipeTransHandler::Setup()
 		}
 	}
 }
+// Builds the per-row table from the rule. Returns false while the rule image is
+// still being decoded.
+bool tTVPImageWipeTransHandler::EnsureRule()
+{
+	if(RuleEdge) return true;
+	if(Decoding && !Decoding->Ready())
+	{
+		Decoding->Poll();
+		if(!Decoding->Ready()) return false;
+	}
+	Setup();
+	return true;
+}
 tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::StartProcess(tjs_uint64 tick)
 {
 	FrameCount++;
@@ -1202,6 +1239,12 @@ tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::StartProcess(tjs_uint64 tic
 	{
 		First = false;
 		StartTick = tick;
+	}
+	if(!EnsureRule())
+	{
+		Elapsed = 0;
+		Threshold = 0;
+		return TJS_S_TRUE;
 	}
 	tjs_uint64 elapsed = tick - StartTick;
 	if(elapsed >= Time) elapsed = Time;
@@ -1218,7 +1261,7 @@ tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::EndProcess()
 	if(Elapsed >= Time) return TJS_S_FALSE;
 	return TJS_S_TRUE;
 }
-tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::Process(tTVPDivisibleData *data) { Records r(Height);for(int y=0;y<Height;y++)r[y]={float(RuleEdge[y]),0,0,0};return Draw(data,Width,Height,6,{float(Threshold),float(Dir)},r,TVPBevyTextureID(Rule->GetTexture())); }
+tjs_error TJS_INTF_METHOD tTVPImageWipeTransHandler::Process(tTVPDivisibleData *data) { if(!RuleEdge) { data->Dest = data->Src1; return TJS_S_OK; } Records r(Height);for(int y=0;y<Height;y++)r[y]={float(RuleEdge[y]),0,0,0};return Draw(data,Width,Height,6,{float(Threshold),float(Dir)},r,TVPBevyTextureID(Rule->GetTexture())); }
 class tTVPImageWipeTransHandlerProvider : public iTVPTransHandlerProvider
 {
 	tjs_uint RefCount;
@@ -1258,6 +1301,7 @@ public:
 		if(TJS_FAILED(options->GetValue(TJS_W("rule"), &rulevar))) return TJS_E_FAIL;
 		if(rulevar.Type() == tvtVoid) return TJS_E_FAIL;
 		iTVPScanLineProvider *scpro = NULL;
+		iTVPPendingRule *decoding = NULL;
 		if(rulevar.Type() == tvtObject)
 		{
 			tTJSNI_BaseLayer *layer=nullptr;
@@ -1266,13 +1310,10 @@ public:
 		}
 		else
 		{
-
 			const tjs_char *rulename;
-			if(TJS_FAILED(options->GetAsString(TJS_W("rule"), &rulename)))
+			if(TJS_FAILED(options->GetAsString(TJS_W("rule"), &rulename)) || !rulename)
 				return TJS_E_FAIL;
-			if(TJS_FAILED(imagepro->LoadImage(rulename, 32, 0x02ffffff,
-					0, src1h, &scpro)))
-				return TJS_E_FAIL;
+			scpro = Universal::CreatePendingRuleProvider(ttstr(rulename), src1h, &decoding);
 		}
 		if(!scpro) return TJS_E_FAIL;
 
@@ -1281,7 +1322,7 @@ public:
 		if(TJS_SUCCEEDED(options->GetValue(TJS_W("dir"), &dirvar)) &&
 		   dirvar.Type() != tvtVoid)
 			dir = (tjs_int)(tjs_int64)dirvar;
-		*handler = new tTVPImageWipeTransHandler(time, src1w, src1h, scpro, dir);
+		*handler = new tTVPImageWipeTransHandler(time, src1w, src1h, scpro, decoding, dir);
 		scpro->Release();
 		return TJS_S_OK;
 	}
@@ -1403,29 +1444,51 @@ public:
 
 
 
+// One axis per pixel, chosen by the cube coordinate nearest to the pixel. The
+// loop covers the whole frame (two million pixels at 1080p), so the rows are
+// spread over the available cores: this runs while a transition starts, and a
+// single-threaded pass would stall the frame that begins it.
 void tTVPHoneyTurnTransHandler::BuildCubeFixups()
 {
     const size_t pixels = size_t(Width) * Height;
     CubeFixups.assign((pixels + 3) / 4, {0, 0, 0, 0});
     const double size = Size;
     const double root3 = 1.7320508075688772;
-    for(int y = 0; y < Height; y++) for(int x = 0; x < Width; x++) {
-        const double q = (root3 / 3.0 * x - 1.0 / 3.0 * y) / size;
-        const double r = (2.0 / 3.0 * y) / size;
-        const double cube_y = -q - r;
-        int rx = int(std::floor(q + 0.5));
-        int ry = int(std::floor(cube_y + 0.5));
-        int rz = int(std::floor(r + 0.5));
-        const double dx = std::abs(rx - q);
-        const double dy = std::abs(ry - cube_y);
-        const double dz = std::abs(rz - r);
-        uint32_t axis;
-        if(dx > dy && dx > dz) axis = 1;
-        else if(dy > dz) axis = 2;
-        else axis = 3;
-        const size_t pixel = size_t(y) * Width + x;
-        CubeFixups[pixel / 4][pixel % 4] = float(axis);
+    const auto rows = [this, size, root3](int first, int last) {
+        for(int y = first; y < last; y++) for(int x = 0; x < Width; x++) {
+            const double q = (root3 / 3.0 * x - 1.0 / 3.0 * y) / size;
+            const double r = (2.0 / 3.0 * y) / size;
+            const double cube_y = -q - r;
+            int rx = int(std::floor(q + 0.5));
+            int ry = int(std::floor(cube_y + 0.5));
+            int rz = int(std::floor(r + 0.5));
+            const double dx = std::abs(rx - q);
+            const double dy = std::abs(ry - cube_y);
+            const double dz = std::abs(rz - r);
+            uint32_t axis;
+            if(dx > dy && dx > dz) axis = 1;
+            else if(dy > dz) axis = 2;
+            else axis = 3;
+            const size_t pixel = size_t(y) * Width + x;
+            CubeFixups[pixel / 4][pixel % 4] = float(axis);
+        }
+    };
+    unsigned threads = std::thread::hardware_concurrency();
+    if(threads > 8) threads = 8;
+    if(threads < 2 || Height < 64)
+    {
+        rows(0, Height);
+        return;
     }
+    std::vector<std::thread> workers;
+    workers.reserve(threads);
+    for(unsigned i = 0; i < threads; i++)
+    {
+        const int first = (int)((tjs_int64)Height * i / threads);
+        const int last = (int)((tjs_int64)Height * (i + 1) / threads);
+        workers.emplace_back([&rows, first, last] { rows(first, last); });
+    }
+    for(auto &worker : workers) worker.join();
 }
 
 tjs_error TJS_INTF_METHOD tTVPHoneyTurnTransHandler::StartProcess(tjs_uint64 tick)
@@ -2185,20 +2248,134 @@ namespace Universal {
 
 
 
-class tRuleScanLineProvider : public iTVPScanLineProvider
+static inline tjs_uint32 CanonicalRulePixel(tjs_uint32 pixel)
+{
+	return (pixel & 0xff00ff00u) | ((pixel >> 16) & 0xffu) | ((pixel & 0xffu) << 16);
+}
+
+struct tTVPRulePixels
+{
+	tjs_int Width = 0;
+	tjs_int Height = 0;
+	std::vector<tjs_uint32> Pixels;
+};
+
+// Rule images are decoded on a worker thread. A 1080p rule takes about ten
+// milliseconds to decode, and the engine's texture path costs as much again
+// because the pixels have to be read back from the GPU, which waits for the
+// frame in flight. Neither belongs in the frame that starts a transition, so
+// the decode is requested here and the transition holds at phase 0, showing the
+// same image as the frame before, until the pixels arrive.
+class tTVPRuleDecoder
+{
+	struct Job
+	{
+		uint64_t Token;
+		ttstr Name;
+		tjs_uint DesW, DesH;
+	};
+	std::mutex Mutex;
+	std::condition_variable Wake;
+	std::deque<Job> Queue;
+	std::map<uint64_t, tTVPRulePixels> Finished; // empty pixels: decode failed
+	uint64_t NextToken = 1;
+	bool Stopping = false;
+	std::thread Worker; // declared last: the thread reads the members above
+
+	void Run()
+	{
+		for(;;)
+		{
+			Job job;
+			{
+				std::unique_lock<std::mutex> lock(Mutex);
+				Wake.wait(lock, [this] { return Stopping || !Queue.empty(); });
+				if(Queue.empty()) return;
+				job = Queue.front();
+				Queue.pop_front();
+			}
+			// Kept in the stored order: imagewipe samples these pixels as a texture,
+			// and the GPU path always uploaded them unconverted.
+			tTVPRulePixels pixels;
+			TVPLoadGraphicPixels(job.Name, 0x02ffffff, job.DesW, job.DesH,
+					&pixels.Pixels, &pixels.Width, &pixels.Height);
+			std::lock_guard<std::mutex> lock(Mutex);
+			Finished[job.Token] = std::move(pixels);
+		}
+	}
+	tTVPRuleDecoder() : Worker([this] { Run(); }) {}
+
+public:
+	static tTVPRuleDecoder &Get()
+	{
+		static tTVPRuleDecoder *decoder = new tTVPRuleDecoder();
+		return *decoder;
+	}
+	uint64_t Request(const ttstr &name, tjs_uint desw, tjs_uint desh)
+	{
+		std::lock_guard<std::mutex> lock(Mutex);
+		const uint64_t token = NextToken++;
+		Queue.push_back(Job{token, name, desw, desh});
+		Wake.notify_all();
+		return token;
+	}
+	// True once the token's pixels are decoded; they stay empty when the image
+	// could not be decoded.
+	bool Take(uint64_t token, tTVPRulePixels &pixels)
+	{
+		std::lock_guard<std::mutex> lock(Mutex);
+		auto found = Finished.find(token);
+		if(found == Finished.end()) return false;
+		pixels = std::move(found->second);
+		Finished.erase(found);
+		return true;
+	}
+};
+
+class tRuleScanLineProvider : public iTVPScanLineProvider, public iTVPPendingRule
 {
 	tjs_int RefCount;
 	tjs_int W, H;
 	tjs_uint32 *Buf;
+	iTVPTexture2D *Texture;
+	uint64_t Decoding; // token while the pixels are still being decoded
 public:
- iTVPTexture2D *GetTexture() override { return nullptr; }
+ iTVPTexture2D *GetTexture() override
+	{
+		// Only handlers that feed the rule to the shader as a texture ask for this.
+		if(!Texture && Buf && W > 0 && H > 0)
+			Texture = TVPGetRenderManager()->CreateTexture2D(Buf, W * 4, W, H,
+				TVPTextureFormat::RGBA);
+		return Texture;
+	}
  iTVPTexture2D *GetTextureForRender() override { return nullptr; }
 	tRuleScanLineProvider(tjs_int w, tjs_int h)
-		: RefCount(1), W(w), H(h), Buf(0)
+		: RefCount(1), W(w), H(h), Buf(0), Texture(0), Decoding(0)
 	{
 		if(W > 0 && H > 0) Buf = (tjs_uint32*)malloc(sizeof(tjs_uint32) * W * H);
 	}
-	~tRuleScanLineProvider() { if(Buf) free(Buf); }
+	explicit tRuleScanLineProvider(uint64_t decoding)
+		: RefCount(1), W(0), H(0), Buf(0), Texture(0), Decoding(decoding)
+	{
+	}
+	~tRuleScanLineProvider()
+	{
+		if(Texture) Texture->Release();
+		if(Buf) free(Buf);
+	}
+	bool Ready() override { return Decoding == 0; }
+	void Poll() override
+	{
+		if(!Decoding) return;
+		tTVPRulePixels pixels;
+		if(!tTVPRuleDecoder::Get().Take(Decoding, pixels)) return;
+		Decoding = 0;
+		W = pixels.Width;
+		H = pixels.Height;
+		if(W <= 0 || H <= 0) return;
+		Buf = (tjs_uint32*)malloc(sizeof(tjs_uint32) * (size_t)W * (size_t)H);
+		if(Buf) std::memcpy(Buf, pixels.Pixels.data(), sizeof(tjs_uint32) * (size_t)W * (size_t)H);
+	}
 	tjs_uint32 * GetBuffer() { return Buf; }
 	tjs_int GetW() const { return W; }
 	tjs_int GetH() const { return H; }
@@ -2228,12 +2405,7 @@ public:
 
 
 
-static inline tjs_uint32 CanonicalRulePixel(tjs_uint32 pixel)
-{
-    return (pixel & 0xff00ff00u) | ((pixel >> 16) & 0xffu) | ((pixel & 0xffu) << 16);
-}
 static tjs_error CreateRuleProvider(iTVPSimpleOptionProvider *options,
-		iTVPSimpleImageProvider *imagepro, tjs_int dw, tjs_int dh,
 		tRuleScanLineProvider **out)
 {
 	*out = 0;
@@ -2271,42 +2443,23 @@ static tjs_error CreateRuleProvider(iTVPSimpleOptionProvider *options,
 	}
 	else
 	{
-
 		const tjs_char *name = 0;
 		if(TJS_FAILED(options->GetAsString(TJS_W("rule"), &name)) || !name)
 			return TJS_E_FAIL;
-		if(!imagepro) return TJS_E_FAIL;
-		iTVPScanLineProvider *loaded = 0;
-		if(TJS_FAILED(imagepro->LoadImage(name, 32, 0x02ffffff, 0, 0, &loaded)) || !loaded)
-			return TJS_E_FAIL;
-		tjs_int rw = 0, rh = 0;
-		loaded->GetWidth(&rw);
-		loaded->GetHeight(&rh);
-		if(rw <= 0 || rh <= 0) { loaded->Release(); return TJS_E_FAIL; }
-		tRuleScanLineProvider *p = new tRuleScanLineProvider(rw, rh);
-		if(!p->GetBuffer()) { p->Release(); loaded->Release(); return TJS_E_FAIL; }
-		tjs_uint32 *dst = p->GetBuffer();
-		for(tjs_int y = 0; y < rh; y++)
-		{
-			const void *src = 0;
-			if(TJS_SUCCEEDED(ReadLine(loaded,y, &src)) && src)
-			{
-				const tjs_uint32 *line = static_cast<const tjs_uint32 *>(src);
-				for(tjs_int x = 0; x < rw; x++) dst[y * rw + x] = CanonicalRulePixel(line[x]);
-			}
-			else
-				memset(dst + y * rw, 0, sizeof(tjs_uint32) * rw);
-		}
-		loaded->Release();
-		*out = p;
+		*out = new tRuleScanLineProvider(
+			tTVPRuleDecoder::Get().Request(ttstr(name), 0, 0));
 		return TJS_S_OK;
 	}
 }
 
-
-
-
-
+iTVPScanLineProvider *CreatePendingRuleProvider(const ttstr &name, tjs_uint desh,
+		iTVPPendingRule **pending)
+{
+	tRuleScanLineProvider *provider =
+		new tRuleScanLineProvider(tTVPRuleDecoder::Get().Request(name, 0, desh));
+	*pending = provider;
+	return provider;
+}
 
 static inline tjs_uint32 LoadRulePixelHSB(tjs_uint32 argb)
 {
@@ -2356,6 +2509,9 @@ protected:
 	tjs_int Height;
 	tjs_uint32 *RuleBuf;
  iTVPTexture2D *RuleTexture = nullptr;
+	tRuleScanLineProvider *Rule;
+	bool HSB;
+	bool Active;
 	tjs_int Phase;
 	bool First;
 	bool Src1Static;
@@ -2374,38 +2530,13 @@ public:
 			double accel1, double speed1, tjs_int bound1,
 			double accel2, double speed2, tjs_int bound2)
 		: RefCount(1), StartTick(0), Time(time), Width(width), Height(height),
-		  RuleBuf(0), Phase(0), First(true),
+		  RuleBuf(0), Rule(rule), HSB(hsb), Active(false), Phase(0), First(true),
 		  Accel1(accel1), Speed1(speed1), Accel2(accel2), Speed2(speed2),
 		  Bound1(ClampI(bound1, 0, 0x7f)), Bound2(ClampI(bound2, 0, 0x7f))
 	{
 		Src1Static = (accel1 == 0.0 && speed1 == 0.0);
 		Src2Static = (accel2 == 0.0 && speed2 == 0.0);
-		if(Width > 0 && Height > 0)
-		{
-			RuleBuf = (tjs_uint32*)malloc(sizeof(tjs_uint32) * Width * Height);
-		}
-
-		if(RuleBuf && rule && rule->GetBuffer())
-		{
-			tjs_int rw = rule->GetW();
-			tjs_int rh = rule->GetH();
-			const tjs_uint32 *rbuf = rule->GetBuffer();
-			for(tjs_int y = 0; y < Height; y++)
-			{
-				tjs_int sy = (y < rh) ? y : (rh - 1);
-				const tjs_uint32 *src = rbuf + sy * rw;
-				tjs_uint32 *dst = RuleBuf + y * Width;
-				for(tjs_int x = 0; x < Width; x++)
-				{
-					tjs_int sx = (x < rw) ? x : (rw - 1);
-					if(hsb) dst[x] = LoadRulePixelHSB(src[sx]);
-					else    dst[x] = src[sx];
-				}
-			}
-		}
-
-
-
+		if(Rule) Rule->AddRef();
 
 		const double DENOM = 255.0;
 		const double TWO_PI = 6.283185307179586;
@@ -2417,7 +2548,6 @@ public:
 			SinTable[i] = LRound(sin(angle) * TRIG_SCALE);
 		}
 
-		RuleTexture=TVPGetRenderManager()->CreateTexture2D(RuleBuf,Width*4,Width,Height,TVPTextureFormat::RGBA);
 		BuildMoveTable(MoveTable1, Accel1, Speed1, Bound1);
 		BuildMoveTable(MoveTable2, Accel2, Speed2, Bound2);
 		Tables.assign(512, std::array<float, 4>{0, 0, 0, 0});
@@ -2427,10 +2557,50 @@ public:
 			Tables[256 + i] = {float(MoveTable1[i]), float(MoveTable2[i]), 0.0f, 0.0f};
 		}
 	}
+	// Copies the decoded rule into the buffer the shader samples. Returns false
+	// while the rule image is still being decoded.
+	bool EnsureRule()
+	{
+		if(Active) return true;
+		if(Rule && !Rule->Ready())
+		{
+			Rule->Poll();
+			if(!Rule->Ready()) return false;
+		}
+		free(RuleBuf);
+		RuleBuf = 0;
+		if(Width > 0 && Height > 0)
+			RuleBuf = (tjs_uint32*)malloc(sizeof(tjs_uint32) * Width * Height);
+		if(RuleBuf && Rule && Rule->GetBuffer())
+		{
+			tjs_int rw = Rule->GetW();
+			tjs_int rh = Rule->GetH();
+			const tjs_uint32 *rbuf = Rule->GetBuffer();
+			for(tjs_int y = 0; y < Height; y++)
+			{
+				tjs_int sy = (y < rh) ? y : (rh - 1);
+				const tjs_uint32 *src = rbuf + sy * rw;
+				tjs_uint32 *dst = RuleBuf + y * Width;
+				for(tjs_int x = 0; x < Width; x++)
+				{
+					tjs_int sx = (x < rw) ? x : (rw - 1);
+					// The shader expects the rule in canonical (R/B swapped) order.
+					const tjs_uint32 pixel = CanonicalRulePixel(src[sx]);
+					if(HSB) dst[x] = LoadRulePixelHSB(pixel);
+					else    dst[x] = pixel;
+				}
+			}
+		}
+		if(RuleTexture) RuleTexture->Release();
+		RuleTexture=TVPGetRenderManager()->CreateTexture2D(RuleBuf,Width*4,Width,Height,TVPTextureFormat::RGBA);
+		Active = true;
+		return true;
+	}
 	virtual ~tTVP3duniversalTransHandler()
 	{
 		if(RuleBuf) free(RuleBuf);
         if(RuleTexture) RuleTexture->Release();
+		if(Rule) Rule->Release();
 	}
 	tjs_error TJS_INTF_METHOD AddRef()  { RefCount++; return TJS_S_OK; }
 	tjs_error TJS_INTF_METHOD Release() { if(RefCount == 1) delete this; else RefCount--; return TJS_S_OK; }
@@ -2484,6 +2654,11 @@ tjs_error TJS_INTF_METHOD tTVP3duniversalTransHandler::StartProcess(tjs_uint64 t
 		First = false;
 		StartTick = tick;
 	}
+	if(!EnsureRule())
+	{
+		Phase = 0;
+		return TJS_S_TRUE;
+	}
 	tjs_uint64 elapsed = tick - StartTick;
 	tjs_int phase;
 	if(elapsed >= Time) phase = 0xff;
@@ -2499,6 +2674,7 @@ tjs_error TJS_INTF_METHOD tTVP3duniversalTransHandler::EndProcess()
 }
 tjs_error TJS_INTF_METHOD tTVP3duniversalTransHandler::Process(tTVPDivisibleData *data)
 {
+    if(!Active) { data->Dest = data->Src1; return TJS_S_OK; }
     const size_t pixels = size_t(Width) * Height;
     const int base = Src2Static ? 1 : Src1Static ? 0 : -1;
     const int mask = (Src1Static ? 0 : 1) | (Src2Static ? 0 : 2);
@@ -2575,7 +2751,7 @@ public:
 		tjs_int bound2 = GetOptInt(options, TJS_W("bound2"), 0);
 
 		tRuleScanLineProvider *rule = 0;
-		if(TJS_FAILED(CreateRuleProvider(options, imagepro, (tjs_int)src1w, (tjs_int)src1h, &rule)))
+		if(TJS_FAILED(CreateRuleProvider(options, &rule)))
 			return TJS_E_FAIL;
 		*handler = new tTVP3duniversalTransHandler(time, src1w, src1h, rule, hsb,
 				accel1, speed1, bound1, accel2, speed2, bound2);
