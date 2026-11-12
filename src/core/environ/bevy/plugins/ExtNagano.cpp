@@ -2392,12 +2392,12 @@ public:
 			const tjs_uint32 *rbuf = rule->GetBuffer();
 			for(tjs_int y = 0; y < Height; y++)
 			{
-				tjs_int sy = (tjs_int)((tjs_int64)y * rh / Height);
+				tjs_int sy = (y < rh) ? y : (rh - 1);
 				const tjs_uint32 *src = rbuf + sy * rw;
 				tjs_uint32 *dst = RuleBuf + y * Width;
 				for(tjs_int x = 0; x < Width; x++)
 				{
-					tjs_int sx = (tjs_int)((tjs_int64)x * rw / Width);
+					tjs_int sx = (x < rw) ? x : (rw - 1);
 					if(hsb) dst[x] = LoadRulePixelHSB(src[sx]);
 					else    dst[x] = src[sx];
 				}
