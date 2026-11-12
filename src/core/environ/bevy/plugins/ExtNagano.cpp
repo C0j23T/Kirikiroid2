@@ -2367,8 +2367,7 @@ protected:
 	tjs_int SinTable[256];
 	tjs_int MoveTable1[256];
 	tjs_int MoveTable2[256];
-    std::vector<uint32_t> GeometryCounts;
-    Records Geometry;
+    Records Tables;
 public:
 	tTVP3duniversalTransHandler(tjs_uint64 time, tjs_int width, tjs_int height,
 			tRuleScanLineProvider *rule, bool hsb,
@@ -2393,12 +2392,12 @@ public:
 			const tjs_uint32 *rbuf = rule->GetBuffer();
 			for(tjs_int y = 0; y < Height; y++)
 			{
-				tjs_int sy = (y < rh) ? y : (rh - 1);
+				tjs_int sy = (tjs_int)((tjs_int64)y * rh / Height);
 				const tjs_uint32 *src = rbuf + sy * rw;
 				tjs_uint32 *dst = RuleBuf + y * Width;
 				for(tjs_int x = 0; x < Width; x++)
 				{
-					tjs_int sx = (x < rw) ? x : (rw - 1);
+					tjs_int sx = (tjs_int)((tjs_int64)x * rw / Width);
 					if(hsb) dst[x] = LoadRulePixelHSB(src[sx]);
 					else    dst[x] = src[sx];
 				}
@@ -2421,6 +2420,12 @@ public:
 		RuleTexture=TVPGetRenderManager()->CreateTexture2D(RuleBuf,Width*4,Width,Height,TVPTextureFormat::RGBA);
 		BuildMoveTable(MoveTable1, Accel1, Speed1, Bound1);
 		BuildMoveTable(MoveTable2, Accel2, Speed2, Bound2);
+		Tables.assign(512, std::array<float, 4>{0, 0, 0, 0});
+		for(tjs_int i = 0; i < 256; i++)
+		{
+			Tables[i] = {float(CosTable[i]), float(SinTable[i]), 0.0f, 0.0f};
+			Tables[256 + i] = {float(MoveTable1[i]), float(MoveTable2[i]), 0.0f, 0.0f};
+		}
 	}
 	virtual ~tTVP3duniversalTransHandler()
 	{
@@ -2495,67 +2500,11 @@ tjs_error TJS_INTF_METHOD tTVP3duniversalTransHandler::EndProcess()
 tjs_error TJS_INTF_METHOD tTVP3duniversalTransHandler::Process(tTVPDivisibleData *data)
 {
     const size_t pixels = size_t(Width) * Height;
-    GeometryCounts.resize(pixels);
-    std::fill(GeometryCounts.begin(), GeometryCounts.end(), 0);
-    auto &counts = GeometryCounts;
     const int base = Src2Static ? 1 : Src1Static ? 0 : -1;
-    auto scatter = [&](int phase, const int *move) {
-        for(int y = 0; y < Height; y++) for(int x = 0; x < Width; x++) {
-            const uint32_t rule = RuleBuf[y * Width + x];
-            const int start = (rule >> 16) & 255;
-            int nx = x, ny = y;
-            if(phase >= start) {
-                const int offset = phase - start;
-                const int dir = rule & 255, speed = (rule >> 8) & 255;
-                nx += (CosTable[dir] * speed * move[offset]) >> 19;
-                ny += (SinTable[dir] * speed * move[offset]) >> 19;
-            }
-            if(nx >= 0 && nx < Width && ny >= 0 && ny < Height)
-                counts[size_t(ny) * Width + nx]++;
-        }
-    };
-    if(Src2Static) scatter(Phase, MoveTable1);
-    else if(Src1Static) scatter(255 - Phase, MoveTable2);
-    else { scatter(Phase, MoveTable1); scatter(255 - Phase, MoveTable2); }
-
-    size_t total = 0;
-    for(uint32_t count : counts) total += count;
-    const size_t header_count = (pixels + 1) / 2;
-    Geometry.resize(header_count + (total + 3) / 4);
-    auto &records = Geometry;
-    size_t offset = 0;
-    for(size_t i = 0; i < pixels; i++) {
-        const uint32_t count = counts[i];
-        auto &header = records[i / 2];
-        header[(i % 2) * 2] = float(offset);
-        header[(i % 2) * 2 + 1] = float(count);
-        counts[i] = uint32_t(offset);
-        offset += count;
-    }
-    auto write = [&](int source, int phase, const int *move) {
-        for(int y = 0; y < Height; y++) for(int x = 0; x < Width; x++) {
-            const uint32_t rule = RuleBuf[y * Width + x];
-            const int start = (rule >> 16) & 255;
-            int nx = x, ny = y;
-            if(phase >= start) {
-                const int offset = phase - start;
-                const int dir = rule & 255, speed = (rule >> 8) & 255;
-                nx += (CosTable[dir] * speed * move[offset]) >> 19;
-                ny += (SinTable[dir] * speed * move[offset]) >> 19;
-            }
-            if(nx < 0 || nx >= Width || ny < 0 || ny >= Height) continue;
-            const size_t target = size_t(ny) * Width + nx;
-            const uint32_t scalar = uint32_t(source) * uint32_t(pixels) + uint32_t(y * Width + x);
-            const size_t slot = counts[target]++;
-            records[header_count + slot / 4][slot % 4] = float(scalar);
-        }
-    };
-    if(Src2Static) write(0, Phase, MoveTable1);
-    else if(Src1Static) write(1, 255 - Phase, MoveTable2);
-    else { write(0, Phase, MoveTable1); write(1, 255 - Phase, MoveTable2); }
+    const int mask = (Src1Static ? 0 : 1) | (Src2Static ? 0 : 2);
     return Draw(data, Width, Height, 8,
-        {float(Phase), float(base), float(pixels), float(total)},
-        records, TVPBevyTextureID(RuleTexture));
+        {float(Phase), float(base), float(pixels), float(mask)},
+        Tables, TVPBevyTextureID(RuleTexture));
 }
 
 class tTVP3duniversalTransHandlerProvider : public iTVPTransHandlerProvider
