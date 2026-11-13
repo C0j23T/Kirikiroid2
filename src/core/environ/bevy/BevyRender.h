@@ -19,3 +19,5 @@ extern "C" int krkr_render_dispatch(TVPBevyRenderCommand *command);
 uint64_t TVPBevyTextureID(iTVPTexture2D *texture);
 
 void TVPBevyInvalidateTexture(iTVPTexture2D *texture);
+
+void *TVPBevyPluginImageBuffer(iTVPTexture2D *texture, bool write);

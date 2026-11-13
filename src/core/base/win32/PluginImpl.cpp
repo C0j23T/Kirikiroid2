@@ -14,6 +14,7 @@
 #include <functional>
 #include "ScriptMgnIntf.h"
 #include "PluginImpl.h"
+#include "ExternalTransitions.h"
 #include "StorageImpl.h"
 #include "GraphicsLoaderImpl.h"
 
@@ -23,6 +24,8 @@
 #include "tjsHashSearch.h"
 #include "EventIntf.h"
 #include "TransIntf.h"
+#include "tvpgl.h"
+#include "tjsObject.h"
 #include "tjsArray.h"
 #include "tjsDictionary.h"
 #include "DebugIntf.h"
@@ -45,6 +48,7 @@
 #include "FilePathUtil.h"
 #include "Application.h"
 #include "SysInitImpl.h"
+#include "ExternalPlugins.h"
 #include <set>
 #ifdef _MSC_VER
 #define strcasecmp _stricmp
@@ -141,6 +145,122 @@ void TVPThrowPluginUnboundFunctionError(const tjs_char *funcname)
 }
 //---------------------------------------------------------------------------
 #endif
+
+// The Bevy port keeps the legacy export table disabled for the old TSS/Susie
+// loader, but external V2 plugins still need the generated function exporter.
+static tTJSHashTable<ttstr, void *> TVPBevyExportFuncs;
+
+static tTJSVariantType TVPBevyVariantType(const tTJSVariant *value) { return value->Type(); }
+static void TVPBevyVariantConstruct(tTJSVariant *value) { new(value) tTJSVariant(); }
+static void TVPBevyVariantDestruct(tTJSVariant *value) { value->~tTJSVariant(); }
+static tjs_int TVPBevyVariantInt(const tTJSVariant *value) { return (tjs_int)*value; }
+static tjs_int64 TVPBevyVariantInteger(const tTJSVariant *value) { return value->AsInteger(); }
+static double TVPBevyVariantReal(const tTJSVariant *value) { return value->AsReal(); }
+
+static void *TVPBevyLookupFunction(const std::string &name)
+{
+    if(name == "tjs_int ::TJS_strcmp(const tjs_char *,const tjs_char *)") return reinterpret_cast<void *>(TJS_strcmp);
+    if(name == "size_t ::TJS_strlen(const tjs_char *)") return reinterpret_cast<void *>(TJS_strlen);
+    if(name == "tjs_int ::TJS_atoi(const tjs_char *)") return reinterpret_cast<void *>(TJS_atoi);
+    if(name == "tjs_char * ::TJS_strrchr(const tjs_char *,tjs_char)") return reinterpret_cast<void *>(TJS_strrchr);
+    if(name == "tjs_char * ::TJS_strchr(const tjs_char *,tjs_char)") return reinterpret_cast<void *>(TJS_strchr);
+    if(name == "tjs_int ::TJS_strncmp(const tjs_char *,const tjs_char *,size_t)") return reinterpret_cast<void *>(TJS_strncmp);
+    if(name == "iTJSDispatch2 * ::TVPGetScriptDispatch()") return reinterpret_cast<void *>(TVPGetScriptDispatch);
+    if(name == "void ::TVPAddLog(const ttstr &)") return reinterpret_cast<void *>(TVPAddLog);
+    if(name == "tTJSVariantType tTJSVariant::Type()") return reinterpret_cast<void *>(TVPBevyVariantType);
+    if(name == "tTJSVariant::tTJSVariant()") return reinterpret_cast<void *>(TVPBevyVariantConstruct);
+    if(name == "tTJSVariant::~ tTJSVariant()") return reinterpret_cast<void *>(TVPBevyVariantDestruct);
+    if(name == "tTJSVariant::operator tjs_int() const") return reinterpret_cast<void *>(TVPBevyVariantInt);
+    if(name == "tTJSVariant::operator tTVInteger() const" || name == "tTVInteger tTJSVariant::AsInteger() const") return reinterpret_cast<void *>(TVPBevyVariantInteger);
+    if(name == "tTJSVariant::operator tTVReal() const" || name == "tTVReal tTJSVariant::AsReal() const") return reinterpret_cast<void *>(TVPBevyVariantReal);
+
+    if (name == "void ::TVPAddTransHandlerProvider(iTVPTransHandlerProvider *)")
+        return reinterpret_cast<void *>(TVPBevyAddExternalTransProvider);
+    if (name == "void ::TVPRemoveTransHandlerProvider(iTVPTransHandlerProvider *)")
+        return reinterpret_cast<void *>(TVPBevyRemoveExternalTransProvider);
+    if (name == "void ::TVPConstAlphaBlend_SD(tjs_uint32 *,const tjs_uint32 *,const tjs_uint32 *,tjs_int,tjs_int)")
+        return reinterpret_cast<void *>(TVPConstAlphaBlend_SD);
+    if (name == "void ::TVPConstAlphaBlend_SD_a(tjs_uint32 *,const tjs_uint32 *,const tjs_uint32 *,tjs_int,tjs_int)")
+        return reinterpret_cast<void *>(TVPConstAlphaBlend_SD_a);
+    if (name == "void ::TVPConstAlphaBlend_SD_d(tjs_uint32 *,const tjs_uint32 *,const tjs_uint32 *,tjs_int,tjs_int)")
+        return reinterpret_cast<void *>(TVPConstAlphaBlend_SD_d);
+    if (name == "void ::TVPFillARGB(tjs_uint32 *,tjs_int,tjs_uint32)")
+        return reinterpret_cast<void *>(TVPFillARGB);
+    if (name == "void ::TVPLinTransCopy(tjs_uint32 *,tjs_int,const tjs_uint32 *,tjs_int,tjs_int,tjs_int,tjs_int,tjs_int)")
+        return reinterpret_cast<void *>(TVPLinTransCopy);
+    if (name == "void ::TVPStretchCopy(tjs_uint32 *,tjs_int,const tjs_uint32 *,tjs_int,tjs_int)")
+        return reinterpret_cast<void *>(TVPStretchCopy);
+    if (name == "void ::TVPDoTryBlock(tTVPTryBlockFunction,tTVPCatchBlockFunction,tTVPFinallyBlockFunction,void *)")
+        return reinterpret_cast<void *>(TVPDoTryBlock);
+    if (name == "void ::TVPThrowExceptionMessage(const tjs_char *)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const tjs_char *)>(TVPThrowExceptionMessage));
+    if (name == "void ::TVPThrowPluginUnboundFunctionError(const char *)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const char *)>(TVPThrowPluginUnboundFunctionError));
+    if (name == "void * ::TVP_malloc(size_t)") return reinterpret_cast<void *>(TVP_malloc);
+    if (name == "void * ::TVP_realloc(void *,size_t)") return reinterpret_cast<void *>(TVP_realloc);
+    if (name == "void ::TVP_free(void *)") return reinterpret_cast<void *>(TVP_free);
+    if (name == "tjs_char * ::TJS_int_to_str(tjs_int,tjs_char *)") return reinterpret_cast<void *>(TJS_int_to_str);
+    if (name == "void ::TJSDoVariantOperation(tjs_int,tTJSVariant &,const tTJSVariant *)") return reinterpret_cast<void *>(TJSDoVariantOperation);
+    auto value = TVPBevyExportFuncs.Find(ttstr(name.c_str()));
+    return value ? *value : nullptr;
+}
+
+void TVPAddExportFunction(const char *name, void *ptr)
+{
+	TVPBevyExportFuncs.Add(ttstr(name), ptr);
+}
+
+void TVPAddExportFunction(const tjs_char *name, void *ptr)
+{
+	TVPBevyExportFuncs.Add(ttstr(name), ptr);
+}
+
+struct tTVPBevyFunctionExporter : iTVPFunctionExporter
+{
+	bool TJS_INTF_METHOD QueryFunctions(const tjs_char **name, void **function,
+		tjs_uint count) override
+	{
+		bool result = true;
+		for (tjs_uint i = 0; i < count; ++i) {
+			void *value = TVPBevyLookupFunction(ttstr(name[i]).AsNarrowStdString());
+			if (value) function[i] = value;
+			else function[i] = nullptr, result = false;
+		}
+		return result;
+	}
+
+	bool TJS_INTF_METHOD QueryFunctionsByNarrowString(const char **name,
+		void **function, tjs_uint count) override
+	{
+		bool result = true;
+		for (tjs_uint i = 0; i < count; ++i) {
+			void *value = TVPBevyLookupFunction(name[i]);
+			if (value) function[i] = value;
+			else function[i] = nullptr, result = false;
+		}
+		return result;
+	}
+	};
+static tTVPBevyFunctionExporter TVPBevyExternalFunctionExporter;
+
+extern void TVPBevyExportTJSFunctions();
+extern void TVPBevyExportStorageFunctions();
+extern "C" iTVPFunctionExporter * TVPGetFunctionExporter()
+{
+    static bool initialized = [] { TVPBevyExportTJSFunctions(); TVPBevyExportStorageFunctions(); return true; }();
+	return &TVPBevyExternalFunctionExporter;
+}
+
+void TVPThrowPluginUnboundFunctionError(const char *funcname)
+{
+    TVPAddLog(ttstr(TJS_W("External plugin missing export: ")) + ttstr(funcname));
+	TVPThrowExceptionMessage(TVPPluginUnboundFunctionError, ttstr(funcname));
+}
+
+void TVPThrowPluginUnboundFunctionError(const tjs_char *funcname)
+{
+	TVPThrowExceptionMessage(TVPPluginUnboundFunctionError, ttstr(funcname));
+}
 
 
 #if 0
@@ -448,8 +568,8 @@ extern std::set<ttstr> TVPRegisteredPlugins;
 static bool TVPPluginLoading = false;
 void TVPLoadPlugin(const ttstr & name)
 {
-	bool success = TVPLoadInternalPlugin(name);
-    return; // seal all plugins
+	if (TVPLoadInternalPlugin(name)) return;
+	if (!TVPBevyLoadExternalPlugin(name)) TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
 #if 0
 	// load plugin
 	if(TVPPluginLoading)
@@ -485,6 +605,7 @@ void TVPLoadPlugin(const ttstr & name)
 //---------------------------------------------------------------------------
 bool TVPUnloadPlugin(const ttstr & name)
 {
+	if (TVPBevyIsExternalPlugin(name)) return TVPBevyUnloadExternalPlugin(name);
 	// unload plugin
 #if 0
 	tTVPPluginVectorType::iterator i;

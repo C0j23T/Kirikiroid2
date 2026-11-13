@@ -159,8 +159,10 @@ void RegisterScanLineTransHandlerProvider()
 }
 void UnregisterScanLineTransHandlerProvider()
 {
+	if(!ScanLineTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(ScanLineTransHandlerProvider);
 	ScanLineTransHandlerProvider->Release();
+	ScanLineTransHandlerProvider = nullptr;
 }
 
 }
@@ -318,8 +320,10 @@ void RegisterZoomFadeTransHandlerProvider()
 }
 void UnregisterZoomFadeTransHandlerProvider()
 {
+	if(!ZoomFadeTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(ZoomFadeTransHandlerProvider);
 	ZoomFadeTransHandlerProvider->Release();
+	ZoomFadeTransHandlerProvider = nullptr;
 }
 
 }
@@ -480,8 +484,10 @@ void RegisterRGBFadeTransHandlerProvider()
 }
 void UnregisterRGBFadeTransHandlerProvider()
 {
+	if(!RGBFadeTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(RGBFadeTransHandlerProvider);
 	RGBFadeTransHandlerProvider->Release();
+	RGBFadeTransHandlerProvider = nullptr;
 }
 
 }
@@ -734,8 +740,10 @@ void RegisterSpinFadeTransHandlerProvider()
 }
 void UnregisterSpinFadeTransHandlerProvider()
 {
+	if(!SpinFadeTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(SpinFadeTransHandlerProvider);
 	SpinFadeTransHandlerProvider->Release();
+	SpinFadeTransHandlerProvider = nullptr;
 }
 
 }
@@ -916,8 +924,10 @@ void RegisterFlutterTransHandlerProvider()
 }
 void UnregisterFlutterTransHandlerProvider()
 {
+	if(!FlutterTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(FlutterTransHandlerProvider);
 	FlutterTransHandlerProvider->Release();
+	FlutterTransHandlerProvider = nullptr;
 }
 
 }
@@ -1109,8 +1119,10 @@ void RegisterBookTransHandlerProvider()
 }
 void UnregisterBookTransHandlerProvider()
 {
+	if(!BookTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(BookTransHandlerProvider);
 	BookTransHandlerProvider->Release();
+	BookTransHandlerProvider = nullptr;
 }
 
 }
@@ -1334,8 +1346,10 @@ void RegisterImageWipeTransHandlerProvider()
 }
 void UnregisterImageWipeTransHandlerProvider()
 {
+	if(!ImageWipeTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(ImageWipeTransHandlerProvider);
 	ImageWipeTransHandlerProvider->Release();
+	ImageWipeTransHandlerProvider = nullptr;
 }
 
 }
@@ -1580,8 +1594,10 @@ void RegisterHoneyTurnTransHandlerProvider()
 }
 void UnregisterHoneyTurnTransHandlerProvider()
 {
+	if(!HoneyTurnTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(HoneyTurnTransHandlerProvider);
 	HoneyTurnTransHandlerProvider->Release();
+	HoneyTurnTransHandlerProvider = nullptr;
 }
 
 }
@@ -1806,8 +1822,10 @@ void RegisterMorphingTransHandlerProvider()
 }
 void UnregisterMorphingTransHandlerProvider()
 {
+	if(!MorphingTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(MorphingTransHandlerProvider);
 	MorphingTransHandlerProvider->Release();
+	MorphingTransHandlerProvider = nullptr;
 }
 
 }
@@ -2209,8 +2227,10 @@ void RegisterMultiRippleTransHandlerProvider()
 }
 void UnregisterMultiRippleTransHandlerProvider()
 {
+	if(!MultiRippleTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(MultiRippleTransHandlerProvider);
 	MultiRippleTransHandlerProvider->Release();
+	MultiRippleTransHandlerProvider = nullptr;
 }
 
 }
@@ -2436,7 +2456,7 @@ static tjs_error CreateRuleProvider(iTVPSimpleOptionProvider *options,
 		for(tjs_int y = 0; y < rh; y++)
 		{
 			const tjs_uint32 *src = reinterpret_cast<const tjs_uint32 *>(buffer + y * pitch);
-			for(tjs_int x = 0; x < rw; x++) dst[y * rw + x] = CanonicalRulePixel(src[x]);
+			for(tjs_int x = 0; x < rw; x++) dst[y * rw + x] = src[x];
 		}
 		*out = p;
 		return TJS_S_OK;
@@ -2767,8 +2787,10 @@ void Register3duniversalTransHandlerProvider()
 }
 void Unregister3duniversalTransHandlerProvider()
 {
+	if(!TDUniversalTransHandlerProvider) return;
 	TVPRemoveTransHandlerProvider(TDUniversalTransHandlerProvider);
 	TDUniversalTransHandlerProvider->Release();
+	TDUniversalTransHandlerProvider = nullptr;
 }
 
 }

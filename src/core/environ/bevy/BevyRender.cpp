@@ -21,6 +21,8 @@ namespace
         TVPTextureFormat::e Format;
         std::vector<uint8_t> Mapping;
         bool Writable = false;
+        std::vector<uint32_t> PluginMapping;
+        bool PluginWritable = false;
 
     public:
         uint64_t ID;
@@ -46,6 +48,15 @@ namespace
         }
         void Flush()
         {
+            if(PluginWritable) {
+                Mapping.resize(PluginMapping.size()*4);
+                auto out=reinterpret_cast<uint32_t *>(Mapping.data());
+                for(size_t i=0;i<PluginMapping.size();++i) {
+                    auto p=PluginMapping[i];
+                    out[i]=(p&0xff00ff00)|((p&0xff)<<16)|((p>>16)&0xff);
+                }
+                Writable=true;
+            }
             if (!Writable)
                 return;
             TVPBevyRenderCommand c{};
@@ -60,6 +71,7 @@ namespace
         }
         void Invalidate()
         {
+            PluginMapping.clear(); PluginWritable=false;
             Mapping.clear();
             Writable = false;
         }
@@ -73,6 +85,7 @@ namespace
         }
         const void *GetScanLineForRead(tjs_uint line) override
         {
+            if(PluginWritable) Flush();
             if (line >= (unsigned)Height)
                 throw std::out_of_range("texture row");
             if (Mapping.empty())
@@ -93,8 +106,22 @@ namespace
         void *GetScanLineForWrite(tjs_uint line) override
         {
             auto data = const_cast<void *>(GetScanLineForRead(line));
+            PluginMapping.clear(); PluginWritable=false;
             Writable = true;
             return data;
+        }
+        void *PluginBuffer(bool write) {
+            Flush();
+            if(PluginMapping.empty()) {
+                const auto *source=static_cast<const uint32_t *>(GetScanLineForRead(0));
+                PluginMapping.resize(size_t(Width)*Height);
+                for(size_t i=0;i<PluginMapping.size();++i) {
+                    auto p=source[i];
+                    PluginMapping[i]=(p&0xff00ff00)|((p&0xff)<<16)|((p>>16)&0xff);
+                }
+            }
+            PluginWritable|=write;
+            return PluginMapping.data();
         }
         void Update(const void *pixels, TVPTextureFormat::e format, int pitch,
                     const tTVPRect &r) override
@@ -444,3 +471,7 @@ iTVPRenderManager *TVPGetRenderManager(const TJS::tTJSString &)
     return TVPGetRenderManager();
 }
 bool TVPIsSoftwareRenderManager() { return false; }
+
+void *TVPBevyPluginImageBuffer(iTVPTexture2D *texture, bool write) {
+    return texture ? static_cast<Texture *>(texture)->PluginBuffer(write) : nullptr;
+}

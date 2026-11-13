@@ -41,6 +41,7 @@
 #include "ConfigManager/IndividualConfigManager.h"
 #include "vkdefine.h"
 #include "RenderManager.h"
+#include "BevyRender.h"
 #include <cstdlib>
 #include "FontImpl.h"
 
@@ -2688,14 +2689,14 @@ void tTJSNI_BaseLayer::SetProvincePixel(tjs_int x, tjs_int y, tjs_int n)
 const void * tTJSNI_BaseLayer::GetMainImagePixelBuffer() const
 {
 	if(!MainImage) return NULL;
-	return MainImage->GetScanLine(0);
+	return TVPBevyPluginImageBuffer(MainImage->GetTexture(), false);
 }
 //---------------------------------------------------------------------------
 void * tTJSNI_BaseLayer::GetMainImagePixelBufferForWrite()
 {
 	if(!MainImage) return NULL;
 	ImageModified = true;
-	return MainImage->GetScanLineForWrite(0);
+	return TVPBevyPluginImageBuffer(MainImage->GetTextureForRender(false, nullptr), true);
 }
 //---------------------------------------------------------------------------
 tjs_int tTJSNI_BaseLayer::GetMainImagePixelBufferPitch() const

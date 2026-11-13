@@ -23,6 +23,7 @@
 
 #include "krkr_plugins.h" // generated from PLUGINS by krkr_sys's build script
 #include "ncbind/ncbind.hpp"
+#include "ExternalPlugins.h"
 
 #define KRKR_KEEP_ALIVE(stem, module) TVPBevyPlugin_##stem();
 
@@ -41,6 +42,7 @@ void TVPBevyLoadInternalPlugins() {
 }
 
 void TVPBevyUnloadInternalPlugins() {
+    TVPBevyUnloadExternalPlugins();
     ncbAutoRegister::AllUnregist();
     TVPRegisteredPlugins.clear();
 }

@@ -18,13 +18,7 @@
 #ifdef TVP_SUPPORT_KPI
 	#include "kmp_pi.h"
 #endif
-#if 0
 
-//---------------------------------------------------------------------------
-/*[*/
-//---------------------------------------------------------------------------
-// iTVPFunctionExporter, exporting main module's functions
-//---------------------------------------------------------------------------
 struct iTVPFunctionExporter
 {
 	virtual bool TJS_INTF_METHOD QueryFunctions(const tjs_char **name, void **function,
@@ -32,6 +26,21 @@ struct iTVPFunctionExporter
 	virtual bool TJS_INTF_METHOD QueryFunctionsByNarrowString(const char **name,
 		void **function, tjs_uint count) = 0;
 };
+
+extern "C" iTVPFunctionExporter * TVPGetFunctionExporter();
+extern void TVPAddExportFunction(const tjs_char *name, void *ptr);
+extern void TVPAddExportFunction(const char *name, void *ptr);
+extern void TVPThrowPluginUnboundFunctionError(const char *funcname);
+extern void TVPThrowPluginUnboundFunctionError(const tjs_char *funcname);
+inline void *TVP_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
+
+#if 0
+
+//---------------------------------------------------------------------------
+/*[*/
+//---------------------------------------------------------------------------
+// iTVPFunctionExporter, exporting main module's functions
+//---------------------------------------------------------------------------
 //---------------------------------------------------------------------------
 
 

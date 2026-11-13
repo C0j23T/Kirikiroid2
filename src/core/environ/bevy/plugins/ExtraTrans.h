@@ -17,14 +17,15 @@ inline double option(iTVPSimpleOptionProvider *o, const tjs_char *name, double f
 }
 class Handler : public iTVPDivisibleTransHandler {
     int refs=1, effect, width, height;
+    tTVPLayerType layer;
     tjs_uint64 duration, start=0, elapsed=0;
     bool first=true;
     double values[9]{};
     std::unique_ptr<RotateGeometry> rotation;
     std::vector<std::array<int32_t,4>> geometry;
 public:
-    Handler(int effect, int width, int height, tjs_uint64 duration, iTVPSimpleOptionProvider *o)
-        : effect(effect), width(width), height(height), duration(duration) {
+    Handler(int effect, int width, int height, tjs_uint64 duration, iTVPSimpleOptionProvider *o, tTVPLayerType layer)
+        : effect(effect), width(width), height(height), layer(layer), duration(duration) {
         if(effect==0) {
             values[0]=option(o,TJS_W("maxh"),50); values[1]=option(o,TJS_W("maxomega"),0.2);
             values[2]=option(o,TJS_W("wavetype"),0);
@@ -80,7 +81,7 @@ public:
         c.source_rects[1][0]=d->Src2Left; c.source_rects[1][1]=d->Src2Top;
         for(int i=0;i<2;i++) { c.source_rects[i][2]=c.source_rects[i][0]+d->Width; c.source_rects[i][3]=c.source_rects[i][1]+d->Height; }
         double f=double(elapsed)/duration;
-        c.parameters[0]=int(f*255);
+        c.parameters[0]=int(f*255); c.parameters[11]=layer;
         std::vector<float> shifts;
         if(effect==0) {
             c.method="ExtraWave";
@@ -146,7 +147,7 @@ public:
         if(!o || !out || !w || !h || w!=w2 || h!=h2) return TJS_E_INVALIDPARAM;
         double time=option(o,TJS_W("time"),-1);
         if(!std::isfinite(time) || time<0 || time>double(INT64_MAX)) return TJS_E_INVALIDPARAM;
-        auto handler=new Handler(effect,w,h,std::max(tjs_uint64(2),tjs_uint64(time)),o);
+        auto handler=new Handler(effect,w,h,std::max(tjs_uint64(2),tjs_uint64(time)),o,layer);
         if(type) *type=ttExchange; if(update) *update=tutDivisible; *out=handler; return TJS_S_OK;
     }
 };
