@@ -33,12 +33,13 @@
 #include "FilePathUtil.h"
 #include "Platform.h"
 #include "platform/CCPlatformConfig.h"
-#include "dirent.h"
+#include "krkr_storage.h"
+#include <memory>
 #include "TickCount.h"
-#include <fcntl.h>
-#include <unistd.h>
+
+
 #include "combase.h"
-#include "win32io.h"
+
 
 //---------------------------------------------------------------------------
 // tTVPFileMedia
@@ -123,95 +124,39 @@ tTJSBinaryStream * TJS_INTF_METHOD tTVPFileMedia::Open(const ttstr & name, tjs_u
 	return new tTVPLocalFileStream(origname, _name, flags);
 }
 
-void TVPListDir(const std::string &folder, std::function<void(const std::string&, int)> cb) {
-	DIR *dirp;
-	struct dirent *direntp;
-	tTVP_stat stat_buf;
-	if ((dirp = opendir(folder.c_str())))
-	{
-		while ((direntp = readdir(dirp)) != NULL)
-		{
-			std::string fullpath = folder + "/" + direntp->d_name;
-			if (!TVP_stat(fullpath.c_str(), stat_buf))
-				continue;
-			cb(direntp->d_name, stat_buf.st_mode);
-		}
-		closedir(dirp);
-	}
+void TVPGetLocalFileListAt(const ttstr &name, const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb) {
+    std::unique_ptr<KrkrDirectory, decltype(&krkr_fs_directory_close)> dir(
+        krkr_fs_directory_open(name.AsStdString().c_str()), krkr_fs_directory_close);
+    if (!dir) return;
+    KrkrFsMetadata meta;
+    for (size_t i = 0;; ++i) {
+        const char *native = krkr_fs_directory_entry(dir.get(), i, &meta);
+        if (!native) break;
+        ttstr file(native);
+        tjs_char *p = file.Independ();
+        for (; *p; ++p) if (*p >= 'A' && *p <= 'Z') *p += 'a' - 'A';
+        tTVPLocalFileInfo info;
+        info.NativeName = native;
+        info.Mode = meta.kind == 1 ? S_IFREG : meta.kind == 2 ? S_IFDIR : 0;
+        info.Size = meta.size;
+        info.AccessTime = meta.accessed;
+        info.ModifyTime = meta.modified;
+        info.CreationTime = meta.changed;
+        cb(file, &info);
+    }
 }
 
-void TVPGetLocalFileListAt(const ttstr &name, const std::function<void(const ttstr&, tTVPLocalFileInfo*)>& cb) {
-	DIR *dirp;
-	struct dirent *direntp;
-	tTVP_stat stat_buf;
-	std::string folder(name.AsNarrowStdString());
-	if ((dirp = opendir(folder.c_str())))
-	{
-		while ((direntp = readdir(dirp)) != NULL)
-		{
-			std::string fullpath = folder + "/" + direntp->d_name;
-			if (!TVP_stat(fullpath.c_str(), stat_buf))
-				continue;
-			ttstr file(direntp->d_name);
-			if (file.length() <= 2) {
-				if (file == TJS_W(".") || file == TJS_W(".."))
-					continue;
-			}
-			tjs_char *p = file.Independ();
-			while (*p)
-			{
-				// make all characters small
-				if (*p >= TJS_W('A') && *p <= TJS_W('Z'))
-					*p += TJS_W('a') - TJS_W('A');
-				p++;
-			}
-			tTVPLocalFileInfo info;
-			info.NativeName = direntp->d_name;
-			info.Mode = stat_buf.st_mode;
-			info.Size = stat_buf.st_size;
-			info.AccessTime = stat_buf.st_atime;
-			info.ModifyTime = stat_buf.st_mtime;
-			info.CreationTime = stat_buf.st_ctime;
-			cb(file, &info);
-		}
-		closedir(dirp);
-	}
+void TVPListDir(const std::string &folder, std::function<void(const std::string&, int)> cb) {
+    TVPGetLocalFileListAt(ttstr(folder), [&](const ttstr &, tTVPLocalFileInfo *info) {
+        cb(info->NativeName, info->Mode);
+    });
 }
 //---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPFileMedia::GetListAt(const ttstr &_name, iTVPStorageLister *lister)
 {
 	ttstr name(_name);
 	GetLocalName(name);
-#if 0
-	name += TJS_W("*.*");
 
-	// perform UNICODE operation
-	WIN32_FIND_DATAW ffd;
-	HANDLE handle = ::FindFirstFile(name.c_str(), &ffd);
-	if(handle != INVALID_HANDLE_VALUE)
-	{
-		BOOL cont;
-		do
-		{
-			if(!(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-			{
-				ttstr file(ffd.cFileName);
-				tjs_char *p = file.Independ();
-				while(*p)
-				{
-					// make all characters small
-					if(*p >= TJS_W('A') && *p <= TJS_W('Z'))
-						*p += TJS_W('a') - TJS_W('A');
-					p++;
-				}
-				lister->Add(file);
-			}
-
-			cont = ::FindNextFile(handle, &ffd);
-		} while(cont);
-		FindClose(handle);
-	}
-#endif
 	TVPGetLocalFileListAt(name, [lister](const ttstr &name, tTVPLocalFileInfo* s) {
 		if (s->Mode & (S_IFREG)) {
 			lister->Add(name);
@@ -219,142 +164,14 @@ void TJS_INTF_METHOD tTVPFileMedia::GetListAt(const ttstr &_name, iTVPStorageLis
 	});
 }
 
-static int _utf8_strcasecmp(const char *a, const char *b) {
-    for(; *a && *b; ++a, ++b) {
-        int ca = *a, cb = *b;
-        if('A' <= ca && ca <= 'Z') ca += 'a' - 'A';
-        if('A' <= cb && cb <= 'Z') cb += 'a' - 'A';
-        int ret = ca - cb;
-        if(ret) return ret;
-    }
-    return *a - *b;
-}
-
-#if CC_TARGET_PLATFORM == CC_PLATFORM_IOS
-const std::vector<std::string> &TVPGetApplicationHomeDirectory();
-const std::vector<ttstr> &_getPrefixPath() {
-	static std::vector<ttstr> ret;
-	if (ret.empty()) {
-		for (const std::string &path : TVPGetApplicationHomeDirectory()) {
-			ret.emplace_back(path);
-		}
-	}
-	return ret;
-}
-const std::vector<std::string> &_getHomeDir() {
-	static std::vector<std::string> ret;
-	if (ret.empty()) {
-		for (const std::string &path : TVPGetApplicationHomeDirectory()) {
-			ret.emplace_back(path + "/");
-		}
-	}
-	return ret;
-}
-#endif
-
-//---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPFileMedia::GetLocallyAccessibleName(ttstr &name)
 {
-	ttstr newname;
-
-	const tjs_char *ptr = name.c_str();
-
-#ifdef WIN32
-	if(TJS_strncmp(ptr, TJS_W("./"), 2))
-	{
-		// differs from "./",
-		// this may be a UNC file name.
-		// UNC first two chars must be "\\\\" ?
-		// AFAIK 32-bit version of Windows assumes that '/' can be used as a path
-		// delimiter. Can UNC "\\\\" be replaced by "//" though ?
-
-		newname = ttstr(TJS_W("\\\\")) + ptr;
-	}
-	else
-	{
-		ptr += 2;  // skip "./"
-		if(!*ptr) {
-			newname = TJS_W("");
-		} else {
-			tjs_char dch = *ptr;
-			if(*ptr < TJS_W('a') || *ptr > TJS_W('z')) {
-				newname = TJS_W("");
-			} else {
-				ptr++;
-				if(*ptr != TJS_W('/')) {
-					newname = TJS_W("");
-				} else {
-					newname = ttstr(dch) + TJS_W(":") + ptr;
-				}
-			}
-		}
-	}
-
-	// change path delimiter to '\\'
-	tjs_char *pp = newname.Independ();
-	while(*pp)
-	{
-		if(*pp == TJS_W('/')) *pp = TJS_W('\\');
-		pp++;
-	}
-#else // posix
-    if(!TJS_strncmp(ptr, TJS_W("./"), 2)) {
-        ptr += 2;  // skip "./"
-        newname.Clear();
-    }
-#if CC_TARGET_PLATFORM == CC_PLATFORM_IOS
-    {
-        std::string prefix = "/";
-        prefix += tTJSNarrowStringHolder(ptr).Buf;
-        static const std::vector<ttstr> &prefixPath = _getPrefixPath();
-		static const std::vector<std::string> &homeDir = _getHomeDir();
-		for (int i = 0; i < prefixPath.size(); ++i) {
-			const std::string &dir = homeDir[i];
-			if (prefix.length() < dir.length()) continue;
-			std::string actualPrefix = prefix.substr(0, dir.length());
-			if (!_utf8_strcasecmp(actualPrefix.c_str(), dir.c_str())) {
-				newname = prefixPath[i];
-				ptr += prefixPath[i].length();
-				while (*ptr && *ptr == TJS_W('/')) ++ptr;
-				break;
-			}
-		}
-    }
-#endif
-    while(*ptr) {
-    	const tjs_char *ptr_end = ptr;
-    	while(*ptr_end && *ptr_end != TJS_W('/')) ++ptr_end;
-    	if(ptr_end == ptr) break;
-        const tjs_char *ptr_cur = ptr;
-    	tTJSNarrowStringHolder walker(ttstr(ptr, ptr_end - ptr).c_str());
-    	while(*ptr_end && *ptr_end == TJS_W('/')) ++ptr_end;
-    	ptr = ptr_end;
-
-        DIR *dirp;
-        struct dirent *direntp;
-		newname += "/";
-        if ((dirp = opendir( tTJSNarrowStringHolder(newname.c_str()) ))) {
-        	bool found = false;
-            while ((direntp = readdir( dirp)) != NULL) {
-            	if(!_utf8_strcasecmp(walker, direntp->d_name)) {
-            		newname += direntp->d_name;
-            		found = true;
-            		break;
-            	}
-            }
-            closedir(dirp);
-            if(!found) {
-                newname += ptr_cur;
-            	break;
-            }
-        } else {
-            newname += ptr_cur;
-            break;
-        }
-    }
-
-#endif
-	name = newname;
+    std::string native = name.AsStdString();
+    if (native.rfind("./", 0) == 0) native.erase(0, 1);
+    char *resolved = krkr_fs_resolve(native.c_str(), 1);
+    if (!resolved) { name.Clear(); return; }
+    name = ttstr(resolved);
+    krkr_fs_string_free(resolved);
 }
 //---------------------------------------------------------------------------
 void TJS_INTF_METHOD tTVPFileMedia::GetLocalName(ttstr &name)
@@ -484,7 +301,7 @@ ttstr TVPGetTemporaryName()
 bool TVPRemoveFile(const ttstr &name)
 {
     tTJSNarrowStringHolder holder(name.c_str());
-    return !remove(holder);
+    return krkr_fs_remove(holder, 0) == 0;
 }
 //---------------------------------------------------------------------------
 
@@ -496,7 +313,7 @@ bool TVPRemoveFile(const ttstr &name)
 bool TVPRemoveFolder(const ttstr &name)
 {
     tTJSNarrowStringHolder holder(name.c_str());
-    return !unlink(holder);
+    return krkr_fs_remove(holder, 1) == 0;
 }
 //---------------------------------------------------------------------------
 
@@ -736,136 +553,69 @@ bool TVPCreateFolders(const ttstr &folder)
 // tTVPLocalFileStream
 //---------------------------------------------------------------------------
 tTVPLocalFileStream::tTVPLocalFileStream(const ttstr &origname,
-	const ttstr &localname, tjs_uint32 flag)
-    : MemBuffer(nullptr), FileName(localname), Handle(-1)
+    const ttstr &localname, tjs_uint32 flag) : Handle(nullptr), FileName(localname)
 {
-	tjs_uint32 access = flag & TJS_BS_ACCESS_MASK;
-    if(access == TJS_BS_WRITE) {
-        if (TVPCheckExistentLocalFile(localname)) {
-        } else {
-			ttstr dirpath = TVPLocalExtractFilePath(localname);
-			const tjs_char *p = dirpath.c_str();
-			tjs_int i = dirpath.GetLen();
-			if (p[i-1] == TJS_W('/') || p[i-1] == TJS_W('\\')) i--;
-			dirpath = dirpath.SubString(0, i);
-			if (!TVPCheckExistentLocalFolder(dirpath) && !TVPCreateFolders(dirpath)) {
-				TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
-			}
-//			_lastFileSystemChanged = true;
-        }
-		MemBuffer = new tTVPMemoryStream();
-		return;
-	}
-
-	unsigned int rw = 0;
-	switch(access)
-	{
-	case TJS_BS_READ:
-		rw |= O_RDONLY;				break;
-	case TJS_BS_WRITE:
-		rw |= O_RDWR | O_CREAT | O_TRUNC;	break;
-	case TJS_BS_APPEND:
-        rw |= O_APPEND;	    break;
-	case TJS_BS_UPDATE:
-		rw |= O_RDWR;			    break;
-	}
-
-	tTJSNarrowStringHolder holder(localname.c_str());
-	Handle = open(holder, rw, 0666);
-	if (Handle < 0) {
-		if (access == TJS_BS_APPEND || access == TJS_BS_UPDATE) {
-			// use whole file writing
-			Handle = open(holder, O_RDONLY, 0666);
-			if (Handle >= 0) {
-				tjs_uint64 size = GetSize();
-				if (size < 4 * 1024 * 1024) { // only support file size <= 4M
-					MemBuffer = new tTVPMemoryStream();
-					MemBuffer->SetSize(size);
-					read(Handle, MemBuffer->GetInternalBuffer(), size);
-		}
-				close(Handle);
-				Handle = -1;
-			}
-		}
-		if (!MemBuffer)
-		TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
-	}
-	// push current tick as an environment noise
-	uint32_t tick = TVPGetRoughTickCount32();
-	TVPPushEnvironNoise(&tick, sizeof(tick));
+    tjs_uint32 access = flag & TJS_BS_ACCESS_MASK;
+    if (access == TJS_BS_WRITE) {
+        ttstr parent = TVPLocalExtractFilePath(localname);
+        if (!TVPCreateFolders(parent)) TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
+        MemBuffer = new tTVPMemoryStream();
+        return;
+    }
+    unsigned mode = access == TJS_BS_READ ? 0 : access == TJS_BS_APPEND ? 2 : 3;
+    Handle = krkr_fs_open(localname.AsStdString().c_str(), mode);
+    if (!Handle) TVPThrowExceptionMessage(TVPCannotOpenStorage, origname);
 }
-//---------------------------------------------------------------------------
+
 bool TVPWriteDataToFile(const ttstr &filepath, const void *data, unsigned int len);
 tTVPLocalFileStream::~tTVPLocalFileStream()
 {
-    if(MemBuffer) {
-		if (!TVPWriteDataToFile(FileName, MemBuffer->GetInternalBuffer(), MemBuffer->GetSize())) {
-			delete MemBuffer;
-			ttstr filename(FileName);
-			FileName.~tTJSString();
-			free(this);
-			TVPThrowExceptionMessage(TJS_W("File Writing Error: %1"), filename);
-		}
-		delete MemBuffer;
-    }
-    if (Handle >= 0) {
-		close(Handle);
-	}
-
-	// push current tick as an environment noise
-	// (timing information from file accesses may be good noises)
-	uint32_t tick = TVPGetRoughTickCount32();
-	TVPPushEnvironNoise(&tick, sizeof(tick));
+    std::unique_ptr<tTVPMemoryStream> memory(MemBuffer);
+    krkr_fs_close(Handle);
+    if (memory && !TVPWriteDataToFile(FileName, memory->GetInternalBuffer(), memory->GetSize()))
+        TVPThrowExceptionMessage(TJS_W("File Writing Error: %1"), FileName);
 }
-//---------------------------------------------------------------------------
+
 tjs_uint64 TJS_INTF_METHOD tTVPLocalFileStream::Seek(tjs_int64 offset, tjs_int whence)
 {
-    if(MemBuffer) {
-        return MemBuffer->Seek(offset, whence);
-	}
-	return lseek64(Handle, offset, whence);
+    if (MemBuffer) return MemBuffer->Seek(offset, whence);
+    unsigned origin = whence == TJS_BS_SEEK_SET ? 0 : whence == TJS_BS_SEEK_CUR ? 1 : 2;
+    auto result = krkr_fs_seek(Handle, offset, origin);
+    if (result == UINT64_MAX) TVPThrowExceptionMessage(TVPReadError);
+    return result;
 }
-//---------------------------------------------------------------------------
-tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Read(void *buffer, tjs_uint read_size)
+
+tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Read(void *buffer, tjs_uint size)
 {
-    if(MemBuffer) {
-        return MemBuffer->Read(buffer, read_size);
-	}
-    return read(Handle, buffer, read_size);
+    if (MemBuffer) return MemBuffer->Read(buffer, size);
+    size_t result = krkr_fs_read(Handle, buffer, size);
+    if (result == SIZE_MAX) TVPThrowExceptionMessage(TVPReadError);
+    return result;
 }
-//---------------------------------------------------------------------------
-tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Write(const void *buffer, tjs_uint write_size)
+
+tjs_uint TJS_INTF_METHOD tTVPLocalFileStream::Write(const void *buffer, tjs_uint size)
 {
-    if(MemBuffer) {
-        return MemBuffer->Write(buffer, write_size);
-	}
-    return write(Handle, buffer, write_size);
+    if (MemBuffer) return MemBuffer->Write(buffer, size);
+    size_t result = krkr_fs_write(Handle, buffer, size);
+    if (result == SIZE_MAX) TVPThrowExceptionMessage(TJS_W("File writing failed"));
+    return result;
 }
-//---------------------------------------------------------------------------
+
 void TJS_INTF_METHOD tTVPLocalFileStream::SetEndOfStorage()
 {
-    if(MemBuffer) {
-        return MemBuffer->SetEndOfStorage();
-	}
-    lseek64(Handle, 0, SEEK_END);
+    if (MemBuffer) { MemBuffer->SetEndOfStorage(); return; }
+    if (krkr_fs_set_len(Handle, Seek(0, TJS_BS_SEEK_CUR)) != 0)
+        TVPThrowExceptionMessage(TJS_W("File truncation failed"));
 }
-//---------------------------------------------------------------------------
+
 tjs_uint64 TJS_INTF_METHOD tTVPLocalFileStream::GetSize()
 {
-    if(MemBuffer) {
-        return MemBuffer->GetSize();
-    }
-	tjs_uint64 ret;
-    tjs_int64 curpos = lseek64(Handle, 0, SEEK_CUR);
-    ret = lseek64(Handle, 0, SEEK_END);
-    lseek64(Handle, curpos, SEEK_SET);
-	return ret;
+    if (MemBuffer) return MemBuffer->GetSize();
+    auto result = krkr_fs_size(Handle);
+    if (result == UINT64_MAX) TVPThrowExceptionMessage(TVPReadError);
+    return result;
 }
 //---------------------------------------------------------------------------
-
-
-
-
 
 #ifdef TJS_SUPPORT_VCL
 //---------------------------------------------------------------------------
@@ -1508,30 +1258,22 @@ TJS_END_NATIVE_STATIC_METHOD_DECL_OUTER(/*object to register*/cls,
 }
 //---------------------------------------------------------------------------
 
-static FILE *_fileopen(ttstr path) {
-	std::string strpath = path.AsStdString();
-	FILE *fp = fopen(strpath.c_str(), "wb");
-	if (!fp) { // make dirs
-		path = TVPExtractStoragePath(path);
-		TVPCreateFolders(path);
-		fp = fopen(strpath.c_str(), "wb");
-	}
-	return fp;
-}
-
 bool TVPSaveStreamToFile(tTJSBinaryStream *st, tjs_uint64 offset, tjs_uint64 size, ttstr outpath) {
-	FILE *fp = _fileopen(outpath);
-	if (!fp) return false;
-	tjs_uint64 origpos = st->GetPosition();
-	st->SetPosition(offset);
-	std::vector<char> buffer; buffer.resize(2 * 1024 * 1024);
-	while (size > 0) {
-		unsigned int readsize = size > buffer.size() ? buffer.size() : size;
-		readsize = st->Read(&buffer.front(), readsize);
-		fwrite(&buffer.front(), 1, readsize, fp);
-		size -= readsize;
-	}
-	fclose(fp);
-	st->SetPosition(origpos);
-	return true;
+    if (!TVPCreateFolders(TVPExtractStoragePath(outpath))) return false;
+    std::unique_ptr<KrkrFile, decltype(&krkr_fs_close)> file(
+        krkr_fs_open(outpath.AsStdString().c_str(), 1), krkr_fs_close);
+    if (!file) return false;
+    auto original = st->GetPosition();
+    bool ok = true;
+    try {
+        st->SetPosition(offset);
+        std::vector<char> buffer(2 * 1024 * 1024);
+        while (size) {
+            auto n = st->Read(buffer.data(), (tjs_uint)std::min<tjs_uint64>(size, buffer.size()));
+            if (!n || krkr_fs_write(file.get(), buffer.data(), n) != n) { ok = false; break; }
+            size -= n;
+        }
+        st->SetPosition(original);
+    } catch (...) { st->SetPosition(original); throw; }
+    return ok && krkr_fs_flush(file.get()) == 0;
 }

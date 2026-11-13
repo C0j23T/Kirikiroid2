@@ -1,5 +1,5 @@
-#include <filesystem>
-#include <system_error>
+#include "krkr_storage.h"
+
 #include <memory>
 
 #include "tjsCommHead.h"
@@ -9,10 +9,9 @@
 
 #define NCB_MODULE_NAME TJS_W("fstat.dll")
 
-namespace fs = std::filesystem;
 
 class StoragesFstat {
-    static bool existingPath(const tjs_char *name, fs::path &path) {
+    static bool existingPath(const tjs_char *name, std::string &path) {
         ttstr placed = TVPGetPlacedPath(name);
         if (placed.IsEmpty()) return false;
         ttstr local = TVPGetLocallyAccessibleName(placed);
@@ -21,7 +20,7 @@ class StoragesFstat {
         return true;
     }
 
-    static bool targetPath(const tjs_char *name, fs::path &path) {
+    static bool targetPath(const tjs_char *name, std::string &path) {
         ttstr normalized = TVPNormalizeStorageName(name);
         ttstr local = TVPGetLocallyAccessibleName(normalized);
         if (local.IsEmpty()) return false;
@@ -47,35 +46,27 @@ public:
     }
 
     static bool deleteFile(const tjs_char *name) {
-        fs::path path;
+        std::string path;
         if (!existingPath(name, path)) return false;
-        std::error_code error;
-        if (!fs::is_regular_file(path, error) || error || !fs::remove(path, error) || error)
-            return false;
+        if (krkr_fs_remove(path.c_str(), 0) != 0) return false;
         TVPClearStorageCaches();
         return true;
     }
 
     static bool moveFile(const tjs_char *from, const tjs_char *to) {
-        fs::path source;
-        fs::path destination;
+        std::string source;
+        std::string destination;
         if (!existingPath(from, source) || !targetPath(to, destination)) return false;
-        std::error_code error;
-        if (fs::exists(destination, error) || error) return false;
-        fs::rename(source, destination, error);
-        if (error) return false;
+        if (krkr_fs_rename(source.c_str(), destination.c_str(), 0) != 0) return false;
         TVPClearStorageCaches();
         return true;
     }
 
     static bool copyFile(const tjs_char *from, const tjs_char *to, bool failIfExist) {
-        fs::path source;
-        fs::path destination;
+        std::string source;
+        std::string destination;
         if (!existingPath(from, source) || !targetPath(to, destination)) return false;
-        std::error_code error;
-        const auto options = failIfExist ? fs::copy_options::none
-                                         : fs::copy_options::overwrite_existing;
-        if (!fs::copy_file(source, destination, options, error) || error) return false;
+        if (krkr_fs_copy(source.c_str(), destination.c_str(), !failIfExist) != 0) return false;
         TVPClearStorageCaches();
         return true;
     }
@@ -85,8 +76,7 @@ public:
             TVPThrowExceptionMessage(TJS_W("'/' must be specified at the end of given directory name."));
         directory = TVPNormalizeStorageName(directory);
         TVPGetLocalName(directory);
-        std::error_code error;
-        if (!fs::create_directory(directory.AsStdString(), error) || error) return false;
+        if (krkr_fs_create_dir(directory.AsStdString().c_str(), 0) != 0) return false;
         TVPClearStorageCaches();
         return true;
     }
@@ -96,8 +86,7 @@ public:
             TVPThrowExceptionMessage(TJS_W("'/' must be specified at the end of given directory name."));
         directory = TVPNormalizeStorageName(directory);
         TVPGetLocalName(directory);
-        std::error_code error;
-        if (!fs::remove(directory.AsStdString(), error) || error) return false;
+        if (krkr_fs_remove(directory.AsStdString().c_str(), 1) != 0) return false;
         TVPClearStorageCaches();
         return true;
     }
@@ -108,8 +97,8 @@ public:
         directory = TVPNormalizeStorageName(directory);
         ttstr local = TVPGetLocallyAccessibleName(directory);
         if (local.IsEmpty()) return false;
-        std::error_code error;
-        return fs::is_directory(local.AsStdString(), error) && !error;
+        KrkrFsMetadata meta;
+        return krkr_fs_metadata(local.AsStdString().c_str(), &meta) == 0 && meta.kind == 2;
     }
 };
 

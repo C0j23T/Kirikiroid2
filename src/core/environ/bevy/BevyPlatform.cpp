@@ -11,7 +11,7 @@
 #include <vector>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include "krkr_storage.h"
 
 #include "BevyPlatform.h"
 #include "ConfigManager/LocaleConfigManager.h"
@@ -100,19 +100,13 @@ int TVPShowSimpleInputBox(ttstr &, const ttstr &caption, const ttstr &prompt, co
 // ─── files ──────────────────────────────────────────────────────────────────
 
 bool TVP_stat(const char *name, tTVP_stat &s) {
-    struct stat t;
-    if (stat(name, &t) != 0) return false;
-    s.st_mode = t.st_mode;
-    s.st_size = t.st_size;
-#ifdef st_atime
-    s.st_atim = t.st_atim;
-    s.st_mtim = t.st_mtim;
-    s.st_ctim = t.st_ctim;
-#else
-    s.st_atime = t.st_atime;
-    s.st_mtime = t.st_mtime;
-    s.st_ctime = t.st_ctime;
-#endif
+    KrkrFsMetadata t;
+    if (krkr_fs_metadata(name, &t) != 0) return false;
+    s.st_mode = t.kind == 1 ? S_IFREG : t.kind == 2 ? S_IFDIR : 0;
+    s.st_size = t.size;
+    s.st_atime = t.accessed;
+    s.st_mtime = t.modified;
+    s.st_ctime = t.changed;
     return true;
 }
 
@@ -121,29 +115,12 @@ bool TVP_stat(const tjs_char *name, tTVP_stat &s) {
 }
 
 bool TVPCreateFolders(const ttstr &folder) {
-    std::string path = folder.AsStdString();
-    if (path.empty()) return true;
-    for (size_t i = 1; i <= path.size(); ++i) {
-        if (i == path.size() || path[i] == '/') {
-            std::string part = path.substr(0, i);
-            if (mkdir(part.c_str(), 0755) != 0 && errno != EEXIST) return false;
-        }
-    }
-    return true;
+    if (folder.IsEmpty()) return true;
+    return krkr_fs_create_dir(folder.AsStdString().c_str(), 1) == 0;
 }
 
 bool TVPWriteDataToFile(const ttstr &filepath, const void *data, unsigned int len) {
-    // Write to a temporary file first so a failed write never truncates the
-    // existing file (save data).
-    std::string path = filepath.AsStdString();
-    std::string tmp = path + ".tmp";
-    FILE *fp = std::fopen(tmp.c_str(), "wb");
-    if (!fp) return false;
-    bool ok = std::fwrite(data, 1, len, fp) == len;
-    ok = (std::fclose(fp) == 0) && ok;
-    if (ok) ok = std::rename(tmp.c_str(), path.c_str()) == 0;
-    if (!ok) std::remove(tmp.c_str());
-    return ok;
+    return krkr_fs_replace(filepath.AsStdString().c_str(), data, len) == 0;
 }
 
 // ─── process exit ───────────────────────────────────────────────────────────

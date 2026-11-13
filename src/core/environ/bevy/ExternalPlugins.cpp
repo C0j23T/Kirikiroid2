@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include "krkr_storage.h"
 #include <string>
 #include <set>
 #include <unordered_map>
@@ -65,7 +66,8 @@ bool TVPBevyLoadExternalPlugin(const ttstr &name) {
     if (key.empty() || loaded.find(key) != loaded.end()) return true;
 
     for (const auto &path : candidates(name)) {
-        if (!std::filesystem::exists(path)) continue;
+        KrkrFsMetadata meta;
+        if (krkr_fs_metadata(path.string().c_str(), &meta) != 0 || meta.kind != 1) continue;
         void *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!handle) continue;
         auto link = reinterpret_cast<Link>(dlsym(handle, "V2Link"));

@@ -1,4 +1,5 @@
 #include "FontImpl.h"
+#include "krkr_shim.h"
 #include <ft2build.h>
 #include FT_TRUETYPE_IDS_H
 #include FT_SFNT_NAMES_H
@@ -220,7 +221,20 @@ void TVPInitFontNames()
         
         std::string fullPath = cocos2d::FileUtils::getInstance()->fullPathForFilename("DroidSansFallback.ttf");
         if (TVPEnumFontsProc(fullPath)) break;
-	} while (false);
+    } while (false);
+    if (TVPFontNames.GetCount() == 0) {
+        size_t len = 0;
+        const uint8_t *data = krkr_host_fallback_font(&len);
+        if (data && len <= INT_MAX) {
+            TVPInternalEnumFonts(const_cast<FT_Byte *>(data), (int)len, TJS_W("host-fallback.ttf"),
+                [data, len](TVPFontNamePathInfo *) -> tTJSBinaryStream * {
+                    auto stream = new tTVPMemoryStream();
+                    stream->WriteBuffer(data, (tjs_uint)len);
+                    stream->SetPosition(0);
+                    return stream;
+                });
+        }
+    }
     if(TVPFontNames.GetCount() > 0)
     {
         // set default fontface name

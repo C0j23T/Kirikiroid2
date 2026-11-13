@@ -13,6 +13,7 @@
 #include <deque>
 #include <algorithm>
 #include <time.h>
+#include "krkr_storage.h"
 #include "DebugIntf.h"
 #include "MsgIntf.h"
 #include "StorageIntf.h"
@@ -231,146 +232,57 @@ static void TVPRemoveLoggingHandler(tTJSVariantClosure clo)
 
 
 //---------------------------------------------------------------------------
-// log stream holder
+// host log stream
 //---------------------------------------------------------------------------
-class tTVPLogStreamHolder
-{
-	FILE * Stream;
-	bool Alive;
-	bool OpenFailed;
+class tTVPLogStreamHolder {
+    KrkrFile *Stream = nullptr;
+    bool OpenFailed = false;
 
-public:
-	tTVPLogStreamHolder() { Stream = NULL; Alive = true; OpenFailed = false; }
-	~tTVPLogStreamHolder() { if(Stream) fclose(Stream); Alive = false; }
-
-private:
-	void Open(const tjs_nchar *mode);
-
-public:
-	void Clear(); // clear log stream
-	void Log(const ttstr & text); // log given text
-
-	void Reopen() { if(Stream) fclose(Stream); Stream = NULL; Alive = false; OpenFailed = false; } // reopen log stream
-
-} static TVPLogStreamHolder;
-//---------------------------------------------------------------------------
-void tTVPLogStreamHolder::Open(const tjs_nchar *mode)
-{
-	if(OpenFailed) return; // no more try
-
-	try
-	{
-		ttstr filename;
-		if(TVPLogLocation.GetLen() == 0)
-		{
-			Stream = NULL;
-			OpenFailed = true;
-		}
-		else
-		{
-			// no log location specified
-			filename = TVPNativeLogLocation + TJS_W("/krkr.console.log");
-			TVPEnsureDataPathDirectory();
-			std::string _filename = filename.AsNarrowStdString();
-			Stream = fopen(_filename.c_str(), mode);
-			if(!Stream) OpenFailed = true;
-		}
-
-		if(Stream)
-		{
-			fseek(Stream, 0, SEEK_END);
-			if(ftell(Stream) == 0)
-			{
-				// write BOM
-				// TODO: 32-bit unicode support
-				fwrite(TJS_N("\xff\xfe"), 1, 2, Stream); // indicate unicode text
-			}
-
+    void Close() {
+        krkr_fs_close(Stream);
+        Stream = nullptr;
+    }
+    void Open(const tjs_nchar *mode) {
+        if (OpenFailed || TVPLogLocation.IsEmpty()) return;
+        TVPEnsureDataPathDirectory();
+        auto filename = TVPNativeLogLocation + TJS_W("/krkr.console.log");
+        Stream = krkr_fs_open(filename.AsStdString().c_str(), mode[0] == 'w' ? 1 : 2);
+        if (!Stream) { OpenFailed = true; return; }
+        if (krkr_fs_size(Stream) == 0 && krkr_fs_write(Stream, TJS_N("\xff\xfe"), 2) != 2) {
+            Close(); OpenFailed = true; return;
+        }
 #ifdef TJS_TEXT_OUT_CRLF
-			ttstr separator( TVPSeparatorCRLF );
+        Log(ttstr(TVPSeparatorCRLF));
 #else
-			ttstr separator( TVPSeparatorCR );
+        Log(ttstr(TVPSeparatorCR));
 #endif
-			Log(separator);
+        time_t now = time(nullptr);
+        tjs_char timebuf[80];
+        TJS_strftime(timebuf, 79, TJS_W("%#c"), localtime(&now));
+        Log(ttstr(TJS_W("Logging to ")) + filename + TJS_W(" started on ") + timebuf);
+    }
 
+public:
+    ~tTVPLogStreamHolder() { Close(); }
+    void Reopen() { Close(); OpenFailed = false; }
+    void Clear() { Reopen(); Open("wb"); }
+    void Log(const ttstr &text) {
+        if (!Stream) Open("ab");
+        if (!Stream) return;
+        size_t size = text.GetLen() * sizeof(tjs_char);
+#ifdef TJS_TEXT_OUT_CRLF
+        const tjs_char *newline = TJS_W("\r\n");
+#else
+        const tjs_char *newline = TJS_W("\n");
+#endif
+        size_t newlineSize = TJS_strlen(newline) * sizeof(tjs_char);
+        if (krkr_fs_write(Stream, text.c_str(), size) != size ||
+            krkr_fs_write(Stream, newline, newlineSize) != newlineSize || krkr_fs_flush(Stream) != 0) {
+            Close(); OpenFailed = true;
+        }
+    }
+} static TVPLogStreamHolder;
 
-			static tjs_char timebuf[80];
-
-			tm *struct_tm;
-			time_t timer;
-			timer = time(&timer);
-
-			struct_tm = localtime(&timer);
-			TJS_strftime(timebuf, 79, TJS_W("%#c"), struct_tm);
-
-			Log(ttstr(TJS_W("Logging to ")) + ttstr(filename) + TJS_W(" started on ") + timebuf);
-
-		}
-	}
-	catch(...)
-	{
-		OpenFailed = true;
-	}
-}
-//---------------------------------------------------------------------------
-void tTVPLogStreamHolder::Clear()
-{
-	// clear log text
-	if(Stream) fclose(Stream);
-
-	Open(TJS_N("wb"));
-}
-//---------------------------------------------------------------------------
-void tTVPLogStreamHolder::Log(const ttstr & text)
-{
-	if(!Stream) Open(TJS_N("ab"));
-
-	try
-	{
-		if(Stream)
-		{
-			size_t len = text.GetLen() * sizeof(tjs_char);
-			if(len != fwrite(text.c_str(), 1, len, Stream))
-			{
-				// cannot write
-				fclose(Stream);
-				OpenFailed = true;
-				return;
-			}
-	#ifdef TJS_TEXT_OUT_CRLF
-			fwrite(TJS_W("\r\n"), 1, 2 * sizeof(tjs_char), Stream);
-	#else
-			fwrite(TJS_W("\n"), 1, 1 * sizeof(tjs_char), Stream);
-	#endif
-
-			// flush
-			fflush(Stream);
-		}
-	}
-	catch(...)
-	{
-		try
-		{
-			if(Stream) fclose(Stream);
-		}
-		catch(...)
-		{
-		}
-
-		OpenFailed = true;
-	}
-}
-//---------------------------------------------------------------------------
-
-
-
-
-
-
-
-//---------------------------------------------------------------------------
-// TVPAddLog
-//---------------------------------------------------------------------------
 void TVPAddLog(const ttstr &line, bool appendtoimportant)
 {
 	// add a line to the log.
@@ -837,54 +749,12 @@ class tTVPTJS2ConsoleOutputGateway : public iTJSConsoleOutput
 //---------------------------------------------------------------------------
 // TJS2 Dump Output Gateway
 //---------------------------------------------------------------------------
-static ttstr TVPDumpOutFileName;
-static FILE *TVPDumpOutFile = NULL; // use traditional output routine
-//---------------------------------------------------------------------------
-class tTVPTJS2DumpOutputGateway : public iTJSConsoleOutput
-{
-	void ExceptionPrint(const tjs_char *msg) { Print(msg); }
-
-	void Print(const tjs_char *msg)
-	{
-		if(TVPDumpOutFile)
-		{
-			fwrite(msg, 1, TJS_strlen(msg)*sizeof(tjs_char), TVPDumpOutFile);
-#ifdef TJS_TEXT_OUT_CRLF
-			fwrite(TJS_W("\r\n"), 1, 2 * sizeof(tjs_char), TVPDumpOutFile);
-#else
-			fwrite(TJS_W("\n"), 1, 1 * sizeof(tjs_char), TVPDumpOutFile);
-#endif
-		}
-	}
+class tTVPTJS2DumpOutputGateway : public iTJSConsoleOutput {
+    void ExceptionPrint(const tjs_char *) override {}
+    void Print(const tjs_char *) override {}
 } static TVPTJS2DumpOutputGateway;
-//---------------------------------------------------------------------------
-void TVPTJS2StartDump()
-{
-#if 0
-	ttstr filename = ExePath() + TJS_W(".dump.txt");
-	TVPDumpOutFileName = filename;
-	TVPDumpOutFile = _wfopen(filename.c_str(), TJS_W("wb+"));
-	if(TVPDumpOutFile)
-	{
-		// TODO: 32-bit unicode support
-		fwrite(TJS_N("\xff\xfe"), 1, 2, TVPDumpOutFile); // indicate unicode text
-	}
-#endif
-}
-//---------------------------------------------------------------------------
-void TVPTJS2EndDump()
-{
-#if 0
-	if (TVPDumpOutFile)
-	{
-		fclose(TVPDumpOutFile), TVPDumpOutFile = NULL;
-		TVPAddLog(ttstr(TJS_W("Dumped to ")) + TVPDumpOutFileName);
-	}
-#endif
-}
-//---------------------------------------------------------------------------
-
-
+void TVPTJS2StartDump() {}
+void TVPTJS2EndDump() {}
 
 //---------------------------------------------------------------------------
 // console interface retrieving functions

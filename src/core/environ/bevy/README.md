@@ -21,6 +21,7 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | `BevySound.cpp` | the `iTVPSoundBuffer` of `sound/win32/WaveImpl.cpp`: Kirikiri's `WaveSoundBuffer` pushes decoded PCM (RIFF-WAV, Vorbis, and Opus when built with the `opus` feature) into it, the port keeps it queued and mixes it on request, and the host pulls the mix with `krkr_audio_mix` and writes it to the sound device |
 | `BevyVideo.cpp` | VideoOverlay command adapter; Rust owns decoding and uploads. |
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, BPG/JXR/PVR images. They fail with a clear message. |
+| `krkr_storage.h` (host include) | synchronous Rust filesystem ABI: local streams, directory snapshots, metadata, mutations, configuration and log files; C++ retains Storage names and archive semantics |
 | `BevyFileUtils.cpp` + `compat/platform/CCFileUtils.h` | the subset of cocos2d::FileUtils the core uses |
 | `WEBPLoader.cpp` | `visual/LoadWEBP.cpp`: `.webp` images are decoded by `krkr_shim` (`image-webp`) through `krkr_webp_*`, so libwebp is not linked |
 | `ConfigFiles.h` | tinyxml2 for the preference and locale files (`environ/ConfigManager`): `krkr_shim` (`quick-xml`) parses and writes them, file I/O included, through `krkr_preference_*` / `krkr_locale_*` |

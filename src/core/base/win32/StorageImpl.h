@@ -14,6 +14,7 @@
 #include "StorageIntf.h"
 #include "UtilStreams.h"
 #include <functional>
+#include "krkr_storage.h"
 
 //#include <objidl.h> // for IStream
 
@@ -48,8 +49,7 @@ void TVPGetLocalFileListAt(const ttstr &name, const std::function<void(const tts
 class tTVPLocalFileStream : public tTJSBinaryStream
 {
 private:
-	//HANDLE Handle;
-    int Handle;
+	KrkrFile *Handle;
     tTVPMemoryStream *MemBuffer = nullptr;
     ttstr FileName;
 
@@ -67,7 +67,7 @@ public:
 
 	tjs_uint64 TJS_INTF_METHOD GetSize();
 
-	int GetHandle() const { return Handle; }
+
 };
 //---------------------------------------------------------------------------
 

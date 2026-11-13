@@ -3,12 +3,12 @@
 #include "platform/CCFileUtils.h"
 
 #include <cstdlib>
-#include <filesystem>
-#include <fstream>
+#include "krkr_storage.h"
+#include <memory>
 #include <iterator>
 #include <sstream>
 
-namespace fs = std::filesystem;
+
 
 namespace cocos2d {
 
@@ -22,10 +22,6 @@ static void split_into(const char *list, std::vector<std::string> &out) {
 
 FileUtils::FileUtils() {
     split_into(std::getenv("KRKR_RESOURCE_DIR"), _searchPaths);
-    for (const char *dir : {"/usr/share/fonts/droid", "/usr/share/fonts/TTF",
-                            "/usr/share/fonts/truetype/droid", "/usr/share/fonts/noto-cjk",
-                            "/usr/share/fonts/opentype/noto", "/usr/share/fonts"})
-        _searchPaths.emplace_back(dir);
 }
 
 FileUtils *FileUtils::getInstance() {
@@ -38,28 +34,43 @@ void FileUtils::addSearchPath(const std::string &dir) {
 }
 
 bool FileUtils::isFileExist(const std::string &path) const {
-    std::error_code ec;
-    return !path.empty() && fs::is_regular_file(fullPathForFilename(path), ec);
+    KrkrFsMetadata meta;
+    auto resolved = fullPathForFilename(path);
+    return !resolved.empty() && krkr_fs_metadata(resolved.c_str(), &meta) == 0 && meta.kind == 1;
 }
 
 std::string FileUtils::fullPathForFilename(const std::string &filename) const {
-    std::error_code ec;
     if (filename.empty()) return {};
-    if (fs::path(filename).is_absolute()) return filename;
+    auto resolve = [](const std::string &p) {
+        char *value = krkr_fs_resolve(p.c_str(), 0);
+        std::string result = value ? value : "";
+        krkr_fs_string_free(value);
+        return result;
+    };
+    if (filename[0] == '/') return resolve(filename);
+    KrkrFsMetadata meta;
     for (const auto &dir : _searchPaths) {
-        fs::path p = fs::path(dir) / filename;
-        if (fs::is_regular_file(p, ec)) return p.string();
+        std::string p = dir + "/" + filename;
+        if (krkr_fs_metadata(p.c_str(), &meta) == 0 && meta.kind == 1) return resolve(p);
     }
-    if (fs::is_regular_file(filename, ec)) return fs::absolute(filename, ec).string();
+    if (krkr_fs_metadata(filename.c_str(), &meta) == 0 && meta.kind == 1) return resolve(filename);
     return {};
 }
 
 Data FileUtils::getDataFromFile(const std::string &filename) const {
-    std::string path = fullPathForFilename(filename);
-    if (path.empty()) return {};
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return {};
-    return Data(std::vector<unsigned char>(std::istreambuf_iterator<char>(in), {}));
+    auto path = fullPathForFilename(filename);
+    std::unique_ptr<KrkrFile, decltype(&krkr_fs_close)> file(krkr_fs_open(path.c_str(), 0), krkr_fs_close);
+    if (!file) return {};
+    auto size = krkr_fs_size(file.get());
+    if (size == UINT64_MAX || size > SIZE_MAX) return {};
+    std::vector<unsigned char> bytes((size_t)size);
+    size_t done = 0;
+    while (done < bytes.size()) {
+        size_t n = krkr_fs_read(file.get(), bytes.data() + done, bytes.size() - done);
+        if (n == SIZE_MAX || !n) return {};
+        done += n;
+    }
+    return Data(std::move(bytes));
 }
 
 std::string FileUtils::getStringFromFile(const std::string &filename) const {
@@ -68,17 +79,11 @@ std::string FileUtils::getStringFromFile(const std::string &filename) const {
 }
 
 std::string FileUtils::getWritablePath() const {
-    fs::path base;
-    if (const char *xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg)
-        base = xdg;
-    else if (const char *home = std::getenv("HOME"); home && *home)
-        base = fs::path(home) / ".local" / "share";
-    else
-        base = fs::temp_directory_path();
-    base /= "bevy_krkr";
-    std::error_code ec;
-    fs::create_directories(base, ec);
-    return base.string() + "/";
+    char *value = krkr_fs_writable_root();
+    std::string result = value ? value : "";
+    krkr_fs_string_free(value);
+    if (!result.empty() && result.back() != '/') result += '/';
+    return result;
 }
 
 } // namespace cocos2d

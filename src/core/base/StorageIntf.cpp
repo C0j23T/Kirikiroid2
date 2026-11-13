@@ -809,6 +809,7 @@ void TVPClearStorageArchiveCache()
 //---------------------------------------------------------------------------
 bool TVPIsExistentStorageNoSearchNoNormalize(const ttstr &name)
 {
+	if(name.IsEmpty()) return false;
 	// does name contain > ?
 	tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
 

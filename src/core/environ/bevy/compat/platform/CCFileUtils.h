@@ -1,12 +1,6 @@
 // bevy port: minimal stand-in for cocos2d-x's FileUtils.
 //
-// The engine core only uses FileUtils to locate a few bundled resources
-// (fallback font, preference XML) and to read them into memory. This version
-// is a thin layer over std::filesystem. Search directories, in order:
-//   1. $KRKR_RESOURCE_DIR (colon separated)
-//   2. the directories added with addSearchPath()
-//   3. common system font directories (for DroidSansFallback.ttf)
-// The writable path is $XDG_DATA_HOME/bevy_krkr/ (or ~/.local/share/bevy_krkr/).
+// File access and writable-directory selection are owned by krkr_storage.
 #pragma once
 #include <cstddef>
 #include <cstdint>

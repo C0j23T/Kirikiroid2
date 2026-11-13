@@ -9,6 +9,12 @@
 extern "C" {
 #endif
 
+// Borrowed host fallback font, valid for the process lifetime. Null if absent.
+const uint8_t *krkr_host_fallback_font(size_t *len);
+
+// Memory sizes in KiB; initialized even when the host cannot query memory.
+void krkr_host_memory(uint64_t values[6]);
+
 typedef unsigned int XXH32_hash_t;
 typedef unsigned long long XXH64_hash_t;
 
