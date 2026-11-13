@@ -84,7 +84,7 @@ public:
         c.parameters[0]=int(f*255); c.parameters[11]=layer;
         std::vector<float> shifts;
         if(effect==0) {
-            c.method="ExtraWave";
+            c.method="ExtransWave";
             double t=std::min(elapsed,duration-elapsed), envelope=std::sin(1.5707963267948966*t/(duration/2));
             int amplitude=int(envelope*values[0]);
             double omega=values[1]*(values[2]==0 ? envelope : values[2]==1 ? 1-f : f);
@@ -97,31 +97,31 @@ public:
                 c.parameters[12+i]=float((a*256+(b-a)*int(f*255))/256)/255;
             }
         } else if(effect==1) {
-            c.method="ExtraMosaic";
+            c.method="ExtransMosaic";
             int size=int((values[0]-2)*std::min(elapsed,duration-elapsed)/(duration/2))+2;
             c.parameters[4]=size;
             int ox=(width-size)/2-(width/2/size)*size, oy=(height-size)/2-(height/2/size)*size;
             c.parameters[5]=ox>0 ? ox-size : ox; c.parameters[6]=oy>0 ? oy-size : oy;
         } else if(effect==100) {
-            c.method="ExtraBlurFade"; f=std::pow(f,values[0]); c.parameters[0]=int(f*255+0.5);
+            c.method="ExtransBlurFade"; f=std::pow(f,values[0]); c.parameters[0]=int(f*255+0.5);
             for(int i=1;i<=4;i++) c.parameters[3+i]=int(values[i]*(i<3 ? f : 1-f)+0.5);
             c.parameters[8]=values[5];
         } else if(effect==2) {
-            c.method="ExtraTurn";
+            c.method="ExtransTurn";
             int nx=(width+63)/64, ny=(height+63)/64;
             c.parameters[4]=int(elapsed*(64+(nx+ny)*2)/duration)-ny*2;
             c.data=const_cast<std::array<int32_t,4>*>(TurnTable); c.pitch=sizeof(TurnTable)/sizeof(TurnTable[0]);
         } else if(effect==3 || effect==4 || effect==5) {
-            c.method="ExtraRotate";
+            c.method="ExtransRotate";
             c.data=geometry.data(); c.pitch=geometry.size();
         } else if(effect==101 || effect==102) {
-            c.method="ExtraNagano"; c.parameters[4]=effect-100; c.parameters[5]=f;
+            c.method="ExtNagano"; c.parameters[4]=effect-100; c.parameters[5]=f;
         } else if(effect==6) {
-            c.method="ExtraRipple"; c.parameters[4]=f;
+            c.method="ExtransRipple"; c.parameters[4]=f;
             c.parameters[5]=values[0]; c.parameters[6]=values[1]; c.parameters[7]=values[2];
             c.parameters[8]=values[3]; c.parameters[9]=values[4]; c.parameters[10]=values[5];
         } else {
-            c.method="ExtraRipple"; c.parameters[4]=f;
+            c.method="ExtransRipple"; c.parameters[4]=f;
         }
         if(effect>=2 && effect<=5) {
             c.parameters[2]=d->Left; c.parameters[3]=d->Top;

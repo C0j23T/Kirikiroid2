@@ -40,7 +40,7 @@ iTVPScanLineProvider *CreatePendingRuleProvider(const ttstr &name, tjs_uint desh
 	iTVPPendingRule **pending);
 }
 inline tjs_error Draw(tTVPDivisibleData *d,int w,int h,int kind,std::array<float,8> v={},const Records &records={},uint64_t rule=0) {
- TVPBevyRenderCommand c{}; c.operation=4; c.method="ExtraNagano";
+ TVPBevyRenderCommand c{}; c.operation=4; c.method="ExtNagano";
  c.target=TVPBevyTextureID(d->Dest->GetTextureForRender());
  c.sources[0]=TVPBevyTextureID(d->Src1->GetTexture()); c.sources[1]=TVPBevyTextureID(d->Src2->GetTexture()); c.sources[2]=rule;
  c.rect[0]=d->DestLeft;c.rect[1]=d->DestTop;c.rect[2]=d->DestLeft+d->Width;c.rect[3]=d->DestTop+d->Height;
