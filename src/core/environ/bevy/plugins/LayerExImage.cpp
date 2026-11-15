@@ -29,8 +29,8 @@ struct BevyLayerExImage {
         rect.right = std::min(rect.right, (int)texture->GetWidth());
         rect.bottom = std::min(rect.bottom, (int)texture->GetHeight());
         if (rect.is_empty()) return TJS_S_OK;
-        static const char *methods[] = {"LayerExLight", "LayerExColorize", "LayerExModulate",
-                                       "LayerExNoise", "LayerExWhiteNoise", "LayerExGaussian"};
+        static const char *methods[] = {"LayerExImageLight", "LayerExImageColorize", "LayerExImageModulate",
+                                       "LayerExImageNoise", "LayerExImageWhiteNoise", "LayerExImageGaussian"};
         TVPBevyRenderCommand command{};
         command.operation = 4;
         command.target = TVPBevyTextureID(texture);

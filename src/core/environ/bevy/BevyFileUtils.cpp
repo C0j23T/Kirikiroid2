@@ -22,6 +22,11 @@ static void split_into(const char *list, std::vector<std::string> &out) {
 
 FileUtils::FileUtils() {
     split_into(std::getenv("KRKR_RESOURCE_DIR"), _searchPaths);
+    // TODO: delete this and add default fonts to assets
+    for (const char *dir : {"/usr/share/fonts/droid", "/usr/share/fonts/TTF",
+                            "/usr/share/fonts/truetype/droid", "/usr/share/fonts/noto-cjk",
+                            "/usr/share/fonts/opentype/noto", "/usr/share/fonts"})
+        _searchPaths.emplace_back(dir);
 }
 
 FileUtils *FileUtils::getInstance() {

@@ -132,7 +132,7 @@ public:
         command.rect[0] = rect.left; command.rect[1] = rect.top;
         command.rect[2] = rect.right; command.rect[3] = rect.bottom;
         for (int i = 0; i < 4; ++i) command.source_rects[0][i] = command.rect[i];
-        command.method = movie->alpha ? "LayerMovieAlpha" : "Copy";
+        command.method = movie->alpha ? "LayerExMovieAlpha" : "Copy";
         command.parameters[4] = movie->state.width / 2;
         if (krkr_render_dispatch(&command))
             TVPThrowExceptionMessage(TJS_W("Layer movie GPU copy failed"));

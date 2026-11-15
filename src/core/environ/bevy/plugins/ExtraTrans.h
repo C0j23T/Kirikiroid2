@@ -103,7 +103,7 @@ public:
             int ox=(width-size)/2-(width/2/size)*size, oy=(height-size)/2-(height/2/size)*size;
             c.parameters[5]=ox>0 ? ox-size : ox; c.parameters[6]=oy>0 ? oy-size : oy;
         } else if(effect==100) {
-            c.method="ExtransBlurFade"; f=std::pow(f,values[0]); c.parameters[0]=int(f*255+0.5);
+            c.method="ExtNaganoBlurFade"; f=std::pow(f,values[0]); c.parameters[0]=int(f*255+0.5);
             for(int i=1;i<=4;i++) c.parameters[3+i]=int(values[i]*(i<3 ? f : 1-f)+0.5);
             c.parameters[8]=values[5];
         } else if(effect==2) {
