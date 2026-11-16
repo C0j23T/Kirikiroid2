@@ -568,6 +568,18 @@ extern std::set<ttstr> TVPRegisteredPlugins;
 static bool TVPPluginLoading = false;
 void TVPLoadPlugin(const ttstr & name)
 {
+	const std::set<ttstr> ignoredPlugins = {
+		TJS_W("expat.dll"),
+		TJS_W("lzfs.dll"),
+		TJS_W("kagparserex.dll"),
+		TJS_W("krmovie.dll"),
+		TJS_W("util.dll"),
+		TJS_W("wuvorbis.dll"),
+		TJS_W("wumsadp.dll"),
+		TJS_W("filter.dll"),
+	};
+
+	if(ignoredPlugins.find(name) != ignoredPlugins.end()) return;
 	if (TVPLoadInternalPlugin(name)) return;
 	if (!TVPBevyLoadExternalPlugin(name)) TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
 #if 0
