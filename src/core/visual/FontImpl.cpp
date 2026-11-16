@@ -169,7 +169,7 @@ tTJSBinaryStream* TVPCreateFontStream(const ttstr &fontname)
 }
 
 //---------------------------------------------------------------------------
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(KRKR_BEVY_PORT)
 extern std::vector<ttstr> Android_GetExternalStoragePath();
 extern ttstr Android_GetInternalStoragePath();
 extern ttstr Android_GetApkStoragePath();
@@ -180,7 +180,7 @@ void TVPInitFontNames()
     // enumlate all fonts
     if(TVPFontNamesInit) return;
 	TVPFontNamesInit = true;
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(KRKR_BEVY_PORT)
 	std::vector<ttstr> pathlist = Android_GetExternalStoragePath();
 #endif
 	do {
@@ -191,7 +191,7 @@ void TVPInitFontNames()
 		if (TVPEnumFontsProc(TVPGetAppPath() + "default.ttc")) break;
 		if (TVPEnumFontsProc(TVPGetAppPath() + "default.otf")) break;
 		if (TVPEnumFontsProc(TVPGetAppPath() + "default.otc")) break;
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) && !defined(KRKR_BEVY_PORT)
 		int fontCount = 0;
 		for (const ttstr &path : pathlist) {
 			fontCount += TVPEnumFontsProc(path + "/default.ttf");
@@ -249,7 +249,7 @@ void TVPInitFontNames()
 				list.emplace_back(name);
 			}
 		};
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(KRKR_BEVY_PORT)
 		TVPGetLocalFileListAt(Android_GetInternalStoragePath() + "/fonts", lister);
 		for (const ttstr &path : pathlist) {
 			TVPGetLocalFileListAt(path + "/fonts", lister);
