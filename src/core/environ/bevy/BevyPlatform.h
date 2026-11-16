@@ -40,6 +40,15 @@ void TVPBevyResetWindows();
 class tTJSNI_BaseLayer;
 tTJSNI_BaseLayer *TVPBevyFrontWindowLayer();
 
+/// Size of the texture the host renders: the front window's paint box, or the
+/// configured screen size when no game window exists. WindowEx reports it.
+void TVPBevyGetScreenTextureSize(int *width, int *height);
+
+/// Cursor position tracked for the front-most visible Window. False when no
+/// window is visible. The host does not warp the system pointer.
+bool TVPBevyGetCursorPos(int *x, int *y);
+bool TVPBevySetCursorPos(int x, int y);
+
 uint64_t TVPBevyBuildScene(void *screen, int *width, int *height);
 void TVPBevyResetScene();
 

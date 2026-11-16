@@ -13,6 +13,7 @@
 #include "Random.h"
 #include "RenderManager.h"
 #include "TickCount.h"
+#include "TVPScreen.h"
 #include "WindowImpl.h"
 
 class TVPBevyWindowLayer;
@@ -237,6 +238,37 @@ tTJSNI_BaseLayer *TVPBevyFrontWindowLayer() {
     tTJSNI_Window *owner = window->GetWindow();
     iTVPDrawDevice *device = owner ? owner->GetDrawDevice() : nullptr;
     return device ? device->GetPrimaryLayer() : nullptr;
+}
+
+void TVPBevyGetScreenTextureSize(int *width, int *height) {
+    int w = 0, h = 0;
+    if (TVPBevyWindowLayer *window = FrontWindow()) {
+        w = window->GetWidth();
+        h = window->GetHeight();
+    }
+    if (w <= 0 || h <= 0) {
+        w = tTVPScreen::GetWidth();
+        h = tTVPScreen::GetHeight();
+    }
+    if (width) *width = w;
+    if (height) *height = h;
+}
+
+bool TVPBevyGetCursorPos(int *x, int *y) {
+    TVPBevyWindowLayer *window = FrontWindow();
+    if (!window) return false;
+    tjs_int cx = 0, cy = 0;
+    window->GetCursorPos(cx, cy);
+    if (x) *x = (int)cx;
+    if (y) *y = (int)cy;
+    return true;
+}
+
+bool TVPBevySetCursorPos(int x, int y) {
+    TVPBevyWindowLayer *window = FrontWindow();
+    if (!window) return false;
+    window->SetCursorPos(x, y);
+    return true;
 }
 
 void TVPBevyWindowMouseMove(int x, int y) {

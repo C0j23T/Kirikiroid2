@@ -577,9 +577,10 @@ void TVPLoadPlugin(const ttstr & name)
 		TJS_W("wuvorbis.dll"),
 		TJS_W("wumsadp.dll"),
 		TJS_W("filter.dll"),
+		TJS_W("slideopen.dll"),
 	};
 
-	if(ignoredPlugins.find(name) != ignoredPlugins.end()) return;
+	if(ignoredPlugins.find(TVPExtractStorageName(name).AsLowerCase()) != ignoredPlugins.end()) return;
 	if (TVPLoadInternalPlugin(name)) return;
 	if (!TVPBevyLoadExternalPlugin(name)) TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
 #if 0
