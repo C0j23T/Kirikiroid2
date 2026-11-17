@@ -1097,6 +1097,7 @@ tTVPPluginHolder::tTVPPluginHolder(const ttstr &aname)
     }
 
     ttstr basepath = ExePath();
+    if(TVPCheckExistentLocalFile(basepath)) basepath = ExtractFileDir(basepath);
     if(!basepath.IsEmpty() && basepath[basepath.GetLen() - 1] != TJS_W('/'))
         basepath += TJS_W("/");
     ttstr pname = basepath + aname;
