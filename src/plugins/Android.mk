@@ -7,6 +7,7 @@ LOCAL_MODULE := kr2plugin
 LOCAL_SRC_FILES := \
 $(wildcard $(LOCAL_PATH)/*.cpp) \
 $(wildcard $(LOCAL_PATH)/*.c) \
+layerExMovie/layerExMovie.cpp \
 ncbind/ncbind.cpp \
 xp3filter/xp3filter.cpp \
 
