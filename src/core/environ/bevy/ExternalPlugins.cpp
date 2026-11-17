@@ -62,7 +62,12 @@ bool TVPBevyLoadExternalPlugin(const ttstr &name) {
     local = holder->GetLocalName();
     if (local.IsEmpty() || !TVPCheckExistentLocalFile(local)) return false;
 #endif
-    void *handle = dlopen(local.AsNarrowStdString().c_str(), RTLD_NOW | RTLD_LOCAL);
+    int loadFlags = RTLD_NOW | RTLD_LOCAL;
+#ifdef RTLD_NODELETE
+    // TJS temporary dispatch references can outlive V2Unlink until engine shutdown.
+    loadFlags |= RTLD_NODELETE;
+#endif
+    void *handle = dlopen(local.AsNarrowStdString().c_str(), loadFlags);
     if (!handle) return false;
     auto link = reinterpret_cast<Link>(dlsym(handle, "V2Link"));
     auto unlink = reinterpret_cast<Unlink>(dlsym(handle, "V2Unlink"));
