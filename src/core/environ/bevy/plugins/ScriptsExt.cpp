@@ -211,7 +211,7 @@ struct ScriptsExt {
 
 } // namespace
 
-#define NCB_MODULE_NAME TJS_W("yz_scripts_ext.dll")
+#define NCB_MODULE_NAME TJS_W("scriptsExt.dll")
 
 NCB_ATTACH_CLASS(ScriptsExt, Scripts) {
     NCB_METHOD(clone);
