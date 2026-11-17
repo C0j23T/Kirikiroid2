@@ -581,9 +581,9 @@ tTVPAtExit TVPDestroyPluginVectorAtExit
 bool TVPLoadInternalPlugin(const ttstr &_name);
 extern std::set<ttstr> TVPRegisteredPlugins;
 static bool TVPPluginLoading = false;
-void TVPLoadPlugin(const ttstr & name)
+static bool TVPIsIgnoredPlugin(const ttstr &name)
 {
-	const std::set<ttstr> ignoredPlugins = {
+	static const std::set<ttstr> ignoredPlugins = {
 		TJS_W("expat.dll"),
 		TJS_W("kagparserex.dll"),
 		TJS_W("krmovie.dll"),
@@ -593,8 +593,12 @@ void TVPLoadPlugin(const ttstr & name)
 		TJS_W("filter.dll"),
 		TJS_W("slideopen.dll"),
 	};
+	return ignoredPlugins.find(TVPExtractStorageName(name).AsLowerCase()) != ignoredPlugins.end();
+}
 
-    if(ignoredPlugins.find(TVPExtractStorageName(name).AsLowerCase()) != ignoredPlugins.end()) return;
+void TVPLoadPlugin(const ttstr & name)
+{
+	if(TVPIsIgnoredPlugin(name)) return;
     if(TVPPluginLoading)
         TVPThrowExceptionMessage(TVPCannnotLinkPluginWhilePluginLinking);
     if(TVPLoadInternalPlugin(name)) return;
@@ -610,6 +614,7 @@ void TVPLoadPlugin(const ttstr & name)
 //---------------------------------------------------------------------------
 bool TVPUnloadPlugin(const ttstr & name)
 {
+	if(TVPIsIgnoredPlugin(name)) return true;
     if(TVPBevyIsExternalPlugin(name)) return TVPBevyUnloadExternalPlugin(name);
     if(TVPRegisteredPlugins.count(TVPExtractStorageName(name).AsLowerCase())) return true;
     TVPThrowExceptionMessage(TVPNotLoadedPlugin, name);
