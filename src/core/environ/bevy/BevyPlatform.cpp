@@ -39,6 +39,11 @@ void TVPConsoleLog(const ttstr &l, bool important) {
         std::fprintf(stderr, "[krkr]%s %s\n", important ? "!" : "", utf8.c_str());
 }
 
+void TVPPrintLog(const char *str) {
+    if (str) std::fprintf(stderr, "[krkr] %s\n", str);
+}
+
+
 // ─── screen ─────────────────────────────────────────────────────────────────
 
 static int TVPBevyScreenWidth = 1280;
