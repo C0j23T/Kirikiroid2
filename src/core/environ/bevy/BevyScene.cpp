@@ -5,8 +5,10 @@
 #include "BitmapLayerTreeOwner.h"
 #include "EventIntf.h"
 #include "LayerIntf.h"
+#include "LayerManager.h"
 #include "tjsCommHead.h"
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
@@ -16,6 +18,10 @@ extern void *TVPBevyFrontWindow();
 struct TVPBevyScene
 {
     std::unique_ptr<tTVPBaseTexture> Target;
+    void *Screen = nullptr;
+    tTJSNI_BaseLayer *Layer = nullptr;
+    int Width = 0;
+    int Height = 0;
     std::unordered_set<tTJSNI_BaseLayer *> Painting;
 
     static void Composite(tTVPBaseTexture &target, tTVPBaseTexture &source, int x,
@@ -57,6 +63,16 @@ struct TVPBevyScene
         }
         for (auto child : Children(layer))
             Prepare(*child);
+    }
+
+    static bool HasActiveTransition(tTJSNI_BaseLayer &layer)
+    {
+        if (layer.InTransition && layer.DivisibleTransHandler)
+            return true;
+        for (auto child : Children(layer))
+            if (HasActiveTransition(*child))
+                return true;
+        return false;
     }
 
     void DrawChildren(tTVPBaseTexture &target, tTJSNI_BaseLayer &parent)
@@ -156,6 +172,8 @@ struct TVPBevyScene
 };
 
 static TVPBevyScene Scene;
+static std::atomic<bool> SceneDirty{true};
+static std::atomic<bool> SceneBuilding{false};
 
 tTVPBaseTexture *tTJSNI_BaseLayer::Complete(const tTVPRect &)
 {
@@ -207,20 +225,61 @@ uint64_t TVPBevyBuildScene(void *screen, int *width, int *height)
     }
     if (!layer || !layer->GetWidth() || !layer->GetHeight())
         return 0;
+
+    const auto scene_screen = screen ? screen : TVPBevyFrontWindow();
+    const int layer_width = layer->GetWidth();
+    const int layer_height = layer->GetHeight();
+    auto *manager = layer->GetManager();
+    const bool key_changed = Scene.Screen != scene_screen || Scene.Layer != layer ||
+                             Scene.Width != layer_width || Scene.Height != layer_height;
     TVPBevyScene::Prepare(*layer);
-    Scene.Target = Scene.Build(*layer);
+    const bool layer_dirty = manager && manager->GetUpdateRegionForCompletion().GetCount();
+    const bool scene_dirty = SceneDirty.exchange(false);
+    const bool transition_active = TVPBevyScene::HasActiveTransition(*layer);
+    if (!Scene.Target || key_changed || !manager || layer_dirty || scene_dirty ||
+        transition_active)
+    {
+        if (manager)
+            manager->GetUpdateRegionForCompletion().Clear();
+        SceneBuilding.store(true);
+        try
+        {
+            Scene.Target = Scene.Build(*layer);
+            Scene.Screen = scene_screen;
+            Scene.Layer = layer;
+            Scene.Width = layer_width;
+            Scene.Height = layer_height;
+            SceneBuilding.store(false);
+        }
+        catch (...)
+        {
+            SceneBuilding.store(false);
+            SceneDirty.store(true);
+            throw;
+        }
+    }
     if (width)
-        *width = layer->GetWidth();
+        *width = layer_width;
     if (height)
-        *height = layer->GetHeight();
+        *height = layer_height;
     return TVPBevyCompositeVideo(
         TVPBevyFrontWindow(),
         TVPBevyTextureID(Scene.Target->GetTextureForRender(true, nullptr)));
 }
+void TVPBevyMarkSceneDirty()
+{
+    if (!SceneBuilding.load())
+        SceneDirty.store(true);
+}
 void TVPBevyResetScene()
 {
     Scene.Target.reset();
+    Scene.Screen = nullptr;
+    Scene.Layer = nullptr;
+    Scene.Width = 0;
+    Scene.Height = 0;
     Scene.Painting.clear();
+    SceneDirty.store(true);
     TVPBevyRenderCommand command{};
     command.operation = 6;
     krkr_render_dispatch(&command);

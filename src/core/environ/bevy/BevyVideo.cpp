@@ -1,5 +1,6 @@
 #include "BevyVideo.h"
 #include "BevyRender.h"
+#include "BevyPlatform.h"
 #include "LayerBitmapIntf.h"
 #include "VideoOvlImpl.h"
 #include "combase.h"
@@ -107,6 +108,7 @@ namespace
         }
         ~Video()
         {
+            TVPBevyMarkSceneDirty();
             SetWindow(nullptr);
             Videos.erase(std::remove(Videos.begin(), Videos.end(), this), Videos.end());
             TVPBevyVideoCommand close{};
@@ -143,32 +145,49 @@ namespace
             if (!--References)
                 delete this;
         }
-        void SetWindow(class tTJSNI_Window *window) override { Window = window; }
+        void SetWindow(class tTJSNI_Window *window) override
+        {
+            if (Window != window)
+                TVPBevyMarkSceneDirty();
+            Window = window;
+        }
         void SetMessageDrainWindow(void *window) override {}
         void SetRect(int l, int t, int r, int b) override
         {
-#if 0 // MoviePlayerOverlay reads the owner bounds instead.
+            if (Rect[0] != l || Rect[1] != t || Rect[2] != r || Rect[3] != b)
+                TVPBevyMarkSceneDirty();
             Rect[0] = l;
             Rect[1] = t;
             Rect[2] = r;
             Rect[3] = b;
-#endif
         }
-        void SetVisible(bool b) override { Visible = b; }
+        void SetVisible(bool b) override
+        {
+            if (Visible != b)
+                TVPBevyMarkSceneDirty();
+            Visible = b;
+        }
         void Play() override
         {
             Send(TVP_BEVY_VIDEO_PLAY);
+            TVPBevyMarkSceneDirty();
             PresentationStopped = false;
         }
         void Stop() override
         {
             Send(TVP_BEVY_VIDEO_STOP);
+            TVPBevyMarkSceneDirty();
             PresentationStopped = true;
         }
-        void Pause() override { Send(TVP_BEVY_VIDEO_PAUSE); }
+        void Pause() override
+        {
+            Send(TVP_BEVY_VIDEO_PAUSE);
+            TVPBevyMarkSceneDirty();
+        }
         void SetPosition(uint64_t tick) override
         {
             Send(TVP_BEVY_VIDEO_SEEK, tick / 1000.0);
+            TVPBevyMarkSceneDirty();
         }
         void GetPosition(uint64_t *tick) override
         {
@@ -180,8 +199,16 @@ namespace
             Send(TVP_BEVY_VIDEO_QUERY);
             *status = static_cast<tTVPVideoStatus>(State.status);
         }
-        void Rewind() override { Send(TVP_BEVY_VIDEO_SEEK); }
-        void SetFrame(int f) override { Send(TVP_BEVY_VIDEO_SEEK, f / State.fps); }
+        void Rewind() override
+        {
+            Send(TVP_BEVY_VIDEO_SEEK);
+            TVPBevyMarkSceneDirty();
+        }
+        void SetFrame(int f) override
+        {
+            Send(TVP_BEVY_VIDEO_SEEK, f / State.fps);
+            TVPBevyMarkSceneDirty();
+        }
         void GetFrame(int *f) override { *f = State.frame; }
         void GetFPS(double *f) override { *f = State.fps; }
         void GetNumberOfFrame(int *f) override { *f = State.duration * State.fps; }
@@ -349,6 +376,7 @@ void TVPBevyTickVideo()
 
 void TVPBevyResetVideo()
 {
+    TVPBevyMarkSceneDirty();
     TVPBevyVideoCommand command{};
     command.operation = TVP_BEVY_VIDEO_RESET;
     krkr_video_dispatch(&command);

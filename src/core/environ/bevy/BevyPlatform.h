@@ -50,6 +50,7 @@ bool TVPBevyGetCursorPos(int *x, int *y);
 bool TVPBevySetCursorPos(int x, int y);
 
 uint64_t TVPBevyBuildScene(void *screen, int *width, int *height);
+void TVPBevyMarkSceneDirty();
 void TVPBevyResetScene();
 
 /// Tell every window it is closing (`onCloseQuery`), the notification a native

@@ -45,6 +45,7 @@ public:
         Windows.push_back(this);
     }
     ~TVPBevyWindowLayer() {
+        TVPBevyMarkSceneDirty();
         Windows.erase(std::remove(Windows.begin(), Windows.end(), this), Windows.end());
     }
     TVPBevyWindowLayer(const TVPBevyWindowLayer &) = delete;
@@ -56,6 +57,7 @@ public:
     void SetPaintBoxSize(tjs_int w, tjs_int h) override {
         if (w < 0) w = 0;
         if (h < 0) h = 0;
+        if (PaintBoxWidth != w || PaintBoxHeight != h) TVPBevyMarkSceneDirty();
         PaintBoxWidth = w;
         PaintBoxHeight = h;
     }
@@ -73,6 +75,7 @@ public:
 
     bool GetVisible() override { return Visible; }
     void SetVisible(bool bVisible) override {
+        if (Visible != bVisible) TVPBevyMarkSceneDirty();
         Visible = bVisible;
         if (bVisible) BringToFront();
     }
@@ -85,6 +88,7 @@ public:
     void BringToFront() override {
         auto it = std::find(Windows.begin(), Windows.end(), this);
         if (it != Windows.end()) {
+            TVPBevyMarkSceneDirty();
             Windows.erase(it);
             Windows.push_back(this);
         }
@@ -335,6 +339,7 @@ void TVPBevyResetWindows() {
     // The TJS objects are gone with the engine; the windows were destroyed
     // through `InvalidateClose`, this only guards against a leftover entry.
     Windows.clear();
+    TVPBevyMarkSceneDirty();
 }
 
 void *TVPBevyFrontWindow() {

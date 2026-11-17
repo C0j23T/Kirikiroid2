@@ -1,4 +1,5 @@
 #include "BevyRender.h"
+#include "BevyPlatform.h"
 #include "LayerBitmapIntf.h"
 #include "tjsCommHead.h"
 #include <algorithm>
@@ -416,7 +417,10 @@ uint64_t TVPBevyTextureID(iTVPTexture2D *texture)
 void TVPBevyInvalidateTexture(iTVPTexture2D *texture)
 {
     if (texture)
+    {
         static_cast<Texture *>(texture)->Invalidate();
+        TVPBevyMarkSceneDirty();
+    }
 }
 void TVPBevyCopyTextureChannels(iTVPTexture2D *target, iTVPTexture2D *source,
                                const std::array<unsigned, 4> &channels,
