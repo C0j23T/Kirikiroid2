@@ -1,12 +1,36 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
+struct DrawRecord {
+    uint64_t id;
+    explicit DrawRecord(uint64_t id):id(id) {}
+    ~DrawRecord() { krkr_layer_ex_record_release(id); }
+    TVPBevyDrawRecordInfo info() const {
+        TVPBevyDrawRecordInfo result{};
+        if(krkr_layer_ex_record_query(id,&result)) TVPThrowExceptionMessage(TJS_W("Could not query drawing record"));
+        return result;
+    }
+};
+
 struct Image {
     std::shared_ptr<tTVPBaseTexture> texture;
+    std::shared_ptr<DrawRecord> record;
     double dpiX=96,dpiY=96;
     mutable int status=0;
     Image()=default;
     explicit Image(std::shared_ptr<tTVPBaseTexture> value):texture(std::move(value)) {}
+    explicit Image(std::shared_ptr<DrawRecord> value):record(std::move(value)) {}
     void load(ttstr name) {
+        std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_READ));
+        unsigned char header[4]{};
+        if(stream->Read(header,4)==4 && header[0]==1 && header[1]==0 && header[2]==0 && header[3]==0) {
+            auto length=stream->GetSize();
+            if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Metafile is too large"));
+            stream->SetPosition(0); std::vector<unsigned char> bytes(static_cast<size_t>(length)); stream->ReadBuffer(bytes.data(),bytes.size());
+            uint64_t id=0;
+            if(krkr_layer_ex_record_decode(bytes.data(),bytes.size(),&id)) TVPThrowExceptionMessage(TJS_W("Could not decode metafile image"));
+            record=std::make_shared<DrawRecord>(id); texture.reset(); return;
+        }
+        stream.reset();
         auto value=std::make_shared<tTVPBaseTexture>(1,1);
         iTJSDispatch2 *metadata=nullptr;
         TVPLoadGraphic(value.get(),name,TVP_clNone,0,0,glmNormal,nullptr,&metadata);
@@ -20,6 +44,7 @@ struct Image {
         }
         dpiX=x; dpiY=y;
         texture=std::move(value);
+        record.reset();
     }
     static tjs_error TJS_INTF_METHOD create(Image **result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *) {
         if(count>1) return TJS_E_BADPARAMCOUNT;
@@ -27,16 +52,21 @@ struct Image {
         if(count) value->load(ttstr(*p[0]));
         *result=value.release(); return TJS_S_OK;
     }
-    unsigned GetWidth() const { return texture ? texture->GetWidth() : 0; }
-    unsigned GetHeight() const { return texture ? texture->GetHeight() : 0; }
+    unsigned GetWidth() const { return record ? record->info().width : texture ? texture->GetWidth() : 0; }
+    unsigned GetHeight() const { return record ? record->info().height : texture ? texture->GetHeight() : 0; }
     double GetHorizontalResolution() const { return dpiX; }
     double GetVerticalResolution() const { return dpiY; }
-    int GetType() const { return texture ? 1 : 0; }
+    int GetType() const { return record ? 2 : texture ? 1 : 0; }
     int GetPixelFormat() const { return 0x26200a; }
     int GetFlags() const { return texture ? 2 : 0; }
     int GetLastStatus() const { int result=status; status=0; return result; }
     tTJSVariant Clone() const {
         auto copy=new Image(*this); if(texture) copy->texture=std::make_shared<tTVPBaseTexture>(*texture);
+        if(record) {
+            uint64_t id=0;
+            if(krkr_layer_ex_record_clone(record->id,&id)) { delete copy; TVPThrowExceptionMessage(TJS_W("Could not clone metafile image")); }
+            copy->record=std::make_shared<DrawRecord>(id);
+        }
         return boxed(copy);
     }
     tTJSVariant GetBounds() const { return boxed(new Rect(0,0,GetWidth(),GetHeight())); }

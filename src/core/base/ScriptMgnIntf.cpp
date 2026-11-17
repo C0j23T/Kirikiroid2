@@ -944,6 +944,13 @@ void TVPExecuteStartupScript()
                 TVPExecuteStorage(TVPStartupScriptName);
 				TVPStartupSuccess = true;
             }
+            catch (eTJS &error)
+            {
+                TVPAddImportantLog(TJS_W("Startup script failed before Initialize fallback: ") + error.GetMessage());
+				if (!TVPIsExistentStorage(TJS_W("System/Initialize.tjs"))) {
+					throw;
+				}
+            }
             catch (...)
             {
 				if (!TVPIsExistentStorage(TJS_W("System/Initialize.tjs"))) {

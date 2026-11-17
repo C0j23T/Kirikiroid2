@@ -750,8 +750,8 @@ class tTVPTJS2ConsoleOutputGateway : public iTJSConsoleOutput
 // TJS2 Dump Output Gateway
 //---------------------------------------------------------------------------
 class tTVPTJS2DumpOutputGateway : public iTJSConsoleOutput {
-    void ExceptionPrint(const tjs_char *) override {}
-    void Print(const tjs_char *) override {}
+    void ExceptionPrint(const tjs_char *msg) override { TVPAddLog(msg); }
+    void Print(const tjs_char *msg) override { TVPAddLog(msg); }
 } static TVPTJS2DumpOutputGateway;
 void TVPTJS2StartDump() {}
 void TVPTJS2EndDump() {}

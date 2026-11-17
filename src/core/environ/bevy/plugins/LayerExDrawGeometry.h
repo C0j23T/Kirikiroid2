@@ -95,6 +95,42 @@ struct Path {
     bool newFigure=true;
     Point current{},start{};
 
+    Rect bounds() const {
+        Rect result{}; bool first=true; Point cursor{};
+        auto include=[&](Point point) {
+            if(first) { result={point.x,point.y,0,0}; first=false; return; }
+            double right=std::max(result.right(),point.x),bottom=std::max(result.bottom(),point.y);
+            result.x=std::min(result.x,point.x); result.y=std::min(result.y,point.y);
+            result.width=right-result.x; result.height=bottom-result.y;
+        };
+        for(const auto &command:commands) {
+            const auto &p=command.points;
+            if(command.verb==Verb::Move || command.verb==Verb::Line) { cursor={p[0],p[1]}; include(cursor); }
+            else if(command.verb==Verb::Cubic) {
+                Point a=cursor,b{p[0],p[1]},c{p[2],p[3]},d{p[4],p[5]}; include(d);
+                auto evaluate=[&](double t) {
+                    double s=1-t;
+                    include({s*s*s*a.x+3*s*s*t*b.x+3*s*t*t*c.x+t*t*t*d.x,
+                             s*s*s*a.y+3*s*s*t*b.y+3*s*t*t*c.y+t*t*t*d.y});
+                };
+                for(int axis=0;axis<2;++axis) {
+                    double p0=axis ? a.y:a.x,p1=axis ? b.y:b.x,p2=axis ? c.y:c.x,p3=axis ? d.y:d.x;
+                    double qa=-p0+3*p1-3*p2+p3,qb=2*(p0-2*p1+p2),qc=p1-p0;
+                    if(std::abs(qa)<1e-14) { if(std::abs(qb)>1e-14) { double t=-qc/qb; if(t>0 && t<1) evaluate(t); } }
+                    else {
+                        double discriminant=qb*qb-4*qa*qc;
+                        if(discriminant>=0) for(double sign:{-1.0,1.0}) {
+                            double t=(-qb+sign*std::sqrt(discriminant))/(2*qa);
+                            if(t>0 && t<1) evaluate(t);
+                        }
+                    }
+                }
+                cursor=d;
+            }
+        }
+        return result;
+    }
+
     void startFigure() { newFigure=true; }
     void move(Point p) {
         commands.push_back({Verb::Move,{p.x,p.y}});

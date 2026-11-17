@@ -195,6 +195,24 @@ struct Appearance {
                     if(count<2 || count!=arrayCount(positions)) TVPThrowExceptionMessage(TJS_W("Invalid gradient blend"));
                     for(int i=0;i<count;++i) { p.blendFactors.push_back(coordinate(arrayValue(factors,i))); p.blendPositions.push_back(coordinate(arrayValue(positions,i))); }
                 }
+                for(bool bell:{true,false}) {
+                    auto shape=member(color,bell ? TJS_W("blendBellShape") : TJS_W("blendTriangularShape"));
+                    if(shape.Type()==tvtVoid) continue;
+                    double focus=component(shape,0,TJS_W("focus")),scale=component(shape,1,TJS_W("scale"));
+                    if(focus<0 || focus>1 || scale<0 || scale>1) TVPThrowExceptionMessage(TJS_W("Invalid gradient blend shape"));
+                    p.blendPositions.clear(); p.blendFactors.clear();
+                    int steps=bell ? 64 : 2;
+                    for(int i=0;i<=steps;++i) {
+                        double position=double(i)/steps;
+                        if(!bell) position=i==0 ? 0 : i==1 ? focus : 1;
+                        double factor=position<=focus ? focus==0 ? 1 : position/focus : focus==1 ? 1 : (1-position)/(1-focus);
+                        if(bell) {
+                            constexpr double extent=2.0;
+                            factor=(std::erf(extent*(2*factor-1))+std::erf(extent))/(2*std::erf(extent));
+                        }
+                        p.blendPositions.push_back(position); p.blendFactors.push_back(factor*scale);
+                    }
+                }
             }
         }
         for(double v:{p.x1,p.y1,p.x2,p.y2}) if(!std::isfinite(v)) TVPThrowExceptionMessage(TJS_W("Invalid gradient point"));
@@ -304,23 +322,23 @@ struct Layer {
         if(krkr_render_dispatch(&c)) return TJS_E_FAIL;
         TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
         auto state=DrawState::get(obj);
-        if(state->recording && !state->replaying) { state->records.clear(); state->recordBackground=color; }
+        if(state->recording) state->clearRecord(color);
         if(state->updateWhenDraw) layer->Update();
         return TJS_S_OK;
     }
-    static tjs_error measureText(tTJSVariant *result,tjs_int count,tTJSVariant **p,bool internal) {
+    static tjs_error measureText(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj,bool internal) {
         if(count<2) return TJS_E_BADPARAMCOUNT;
         if(p[0]->Type()!=tvtObject) return TJS_E_INVALIDPARAM;
         auto font=ncbInstanceAdaptor<Font>::GetNativeInstance(p[0]->AsObjectNoAddRef());
         if(!font) return TJS_E_INVALIDPARAM;
         ttstr text=*p[1];
-        tTVPBaseTexture metrics(1,1); metrics.SetFont(font->native());
-        tTVPRect bounds; metrics.GetFontGlyphDrawRect(text,bounds);
-        if(result) *result=internal ? rect(bounds.left,bounds.top,bounds.get_width(),bounds.get_height()) : rect(0,0,metrics.GetTextWidth(text),metrics.GetTextHeight(text));
+        TextOutline outline(*font,text,0,0,DrawState::get(obj)->textRenderingHint);
+        auto bounds=outline.bounds;
+        if(result) *result=internal ? rect(bounds.x,bounds.y,bounds.width,bounds.height) : rect(0,0,outline.advance,outline.height);
         return TJS_S_OK;
     }
-    static tjs_error TJS_INTF_METHOD measure(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *) { return measureText(r,n,p,false); }
-    static tjs_error TJS_INTF_METHOD measureInternal(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *) { return measureText(r,n,p,true); }
+    static tjs_error TJS_INTF_METHOD measure(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *obj) { return measureText(r,n,p,obj,false); }
+    static tjs_error TJS_INTF_METHOD measureInternal(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *obj) { return measureText(r,n,p,obj,true); }
 };
 }
 NCB_REGISTER_SUBCLASS(BevyDraw::Point) {

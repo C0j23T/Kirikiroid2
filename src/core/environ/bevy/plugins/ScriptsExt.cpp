@@ -1,29 +1,26 @@
-// Scripts.foreach(collection, callback, this = void) and Scripts.getObjectKeys.
-// Why the engine has to provide them at all: TJS2 has no `for (var x in obj)`
-// statement, so enumerating an object's members is only possible through
-// `iTJSDispatch2::EnumMembers`, and arrays do not even implement that (see
-// tjsArray.h) -- they are walked by index here.
-//
-// `foreach` takes `(collection, function, this = void)`; arrays are walked as
-// `callback(value, index)`, other objects as `callback(value, name)`.
+// Scripts.foreach(collection, callback, ...arguments) and Scripts.getObjectKeys.
+// Callbacks receive (key, value, ...arguments); a non-void result stops iteration.
 #include "ncbind/ncbind.hpp"
 
 #include <vector>
 
 #include "tjsArray.h"
+#include "tjsDictionary.h"
 #include "tjsNative.h"
 
 namespace {
 
-/// The TJS function a `foreach` call has to invoke, with the `this` it was
-/// given (kept alive for as long as the caller does).
 class GuestFunction {
     tTJSVariantClosure Closure;
+    std::vector<tTJSVariant *> Arguments;
 
 public:
-    GuestFunction(const tTJSVariantClosure &function, iTJSDispatch2 *thisObj) {
+    tTJSVariant Result;
+
+    GuestFunction(const tTJSVariantClosure &function, iTJSDispatch2 *thisObj,
+        tjs_int count, tTJSVariant **params) : Arguments(params, params + count) {
         Closure.Object = function.Object;
-        Closure.ObjThis = thisObj ? thisObj : function.ObjThis;
+        Closure.ObjThis = function.ObjThis ? function.ObjThis : thisObj;
         Closure.AddRef();
     }
     ~GuestFunction() { Closure.Release(); }
@@ -32,18 +29,17 @@ public:
 
     bool IsValid() const { return Closure.Object != nullptr; }
 
-    /// Calls it with `(value, key)`; nothing else is passed.
-    void Call(const tTJSVariant &value, const tTJSVariant &key) {
-        tTJSVariant args[2] = {value, key};
-        tTJSVariant *ptrs[2] = {&args[0], &args[1]};
-        tTJSVariant result;
-        tjs_error hr = Closure.FuncCall(0, nullptr, nullptr, &result, 2, ptrs, nullptr);
+    bool Call(tTJSVariant &key, tTJSVariant &value) {
+        Arguments[0] = &key;
+        Arguments[1] = &value;
+        Result.Clear();
+        tjs_error hr = Closure.FuncCall(0, nullptr, nullptr, &Result,
+            static_cast<tjs_int>(Arguments.size()), Arguments.data(), Closure.ObjThis);
         if (TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr, TJS_W("Scripts.foreach"));
+        return Result.Type() == tvtVoid;
     }
 };
 
-/// Bridges `EnumMembers` (which reports `(name, flags, value)`) to the guest
-/// function.
 class EnumForwarder : public tTJSNativeFunction {
     GuestFunction &Guest;
 
@@ -53,29 +49,25 @@ public:
 
     tjs_error TJS_INTF_METHOD Process(tTJSVariant *result, tjs_int numparams,
         tTJSVariant **param, iTJSDispatch2 *objthis) override {
-        // A falsy result makes `EnumMembers` stop after this member, so
-        // returning void here would visit only the first one.
-        if (result) *result = (tjs_int)1;
-        if (numparams >= 3) Guest.Call(*param[2], *param[0]);
+        bool next = true;
+        if (numparams >= 3 && !(param[1]->AsInteger() & TJS_HIDDENMEMBER))
+            next = Guest.Call(*param[0], *param[2]);
+        if (result) *result = static_cast<tjs_int>(next);
         return TJS_S_OK;
     }
 };
 
-/// True for a TJS `Array` object (the only collection type that cannot be
-/// enumerated member-wise).
 bool IsArray(iTJSDispatch2 *obj) {
     iTJSNativeInstance *instance = nullptr;
     return TJS_SUCCEEDED(obj->NativeInstanceSupport(
         TJS_NIS_GETINSTANCE, (tjs_uint32)TJSGetArrayClassID(), &instance));
 }
 
-/// `AsObjectNoAddRef` throws on a non-object, and KAG calls these with a void
-/// `this`/collection all the time, so check the type first.
+// A void collection has no members.
 iTJSDispatch2 *ObjectOf(const tTJSVariant *value) {
     return value && value->Type() == tvtObject ? value->AsObjectNoAddRef() : nullptr;
 }
 
-/// Collects the member names `EnumMembers` reports.
 class NameCollector : public tTJSNativeFunction {
 public:
     std::vector<ttstr> Names;
@@ -84,49 +76,100 @@ public:
 
     tjs_error TJS_INTF_METHOD Process(tTJSVariant *result, tjs_int numparams,
         tTJSVariant **param, iTJSDispatch2 *objthis) override {
-        // See EnumForwarder::Process: a falsy result ends the enumeration.
+        // A falsy result ends the enumeration.
         if (result) *result = (tjs_int)1;
         if (numparams >= 1) Names.push_back(ttstr(*param[0]));
         return TJS_S_OK;
     }
 };
 
-// ── the members added to the Scripts class ─────────────────────────────────
+tTJSVariant Clone(const tTJSVariant &value);
+
+class CloneMember : public tTJSNativeFunction {
+    iTJSDispatch2 *Target;
+
+public:
+    explicit CloneMember(iTJSDispatch2 *target)
+        : tTJSNativeFunction(TJS_W("Scripts.clone")), Target(target) {}
+
+    tjs_error TJS_INTF_METHOD Process(tTJSVariant *result, tjs_int numparams,
+        tTJSVariant **param, iTJSDispatch2 *objthis) override {
+        if (numparams < 3) return TJS_E_BADPARAMCOUNT;
+        tTJSVariant value = Clone(*param[2]);
+        tjs_error hr = Target->PropSet(TJS_MEMBERENSURE | static_cast<tjs_int>(*param[1]),
+            param[0]->GetString(), nullptr, &value, Target);
+        if (result) *result = static_cast<tjs_int>(1);
+        return hr;
+    }
+};
+
+tTJSVariant Clone(const tTJSVariant &value) {
+    iTJSDispatch2 *object = ObjectOf(&value);
+    if (!object) return value;
+    auto &closure = value.AsObjectClosureNoAddRef();
+    if (IsArray(object)) {
+        iTJSDispatch2 *target = TJSCreateArrayObject();
+        tTJSVariant result(target, target);
+        target->Release();
+        tjs_int count = TJSGetArrayElementCount(object);
+        for (tjs_int i = 0; i < count; ++i) {
+            tTJSVariant member;
+            tjs_error hr = closure.PropGetByNum(TJS_IGNOREPROP, i, &member, nullptr);
+            if (TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr);
+            member = Clone(member);
+            hr = target->PropSetByNum(TJS_MEMBERENSURE, i, &member, target);
+            if (TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr);
+        }
+        return result;
+    }
+    if (closure.IsInstanceOf(0, nullptr, nullptr, TJS_W("Dictionary"), nullptr) == TJS_S_TRUE) {
+        iTJSDispatch2 *target = TJSCreateDictionaryObject();
+        tTJSVariant result(target, target);
+        target->Release();
+        CloneMember member(target);
+        tTJSVariantClosure callback(&member, nullptr);
+        tjs_error hr = closure.EnumMembers(TJS_IGNOREPROP, &callback, nullptr);
+        if (TJS_FAILED(hr)) TJSThrowFrom_tjs_error(hr);
+        return result;
+    }
+    tTJSVariant result;
+    if (closure.FuncCall(0, TJS_W("clone"), nullptr, &result, 0, nullptr, nullptr) == TJS_S_TRUE)
+        return result;
+    return value;
+}
 
 struct ScriptsExt {
-    /// `Scripts.foreach(collection, function(value, key), this = void)`
+    static tTJSVariant clone(tTJSVariant value) { return Clone(value); }
+
     static tjs_error TJS_INTF_METHOD foreach(
         tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDispatch2 *objthis) {
         if (numparams < 2) return TJS_E_BADPARAMCOUNT;
+        if (result) result->Clear();
         iTJSDispatch2 *target = ObjectOf(param[0]);
-        if (!target) return TJS_S_OK; // iterating a non-object yields nothing
+        if (!target) return TJS_S_OK;
         if (param[1]->Type() != tvtObject) return TJS_E_INVALIDPARAM;
-        GuestFunction guest(param[1]->AsObjectClosureNoAddRef(),
-            numparams >= 3 ? ObjectOf(param[2]) : nullptr);
+        GuestFunction guest(param[1]->AsObjectClosureNoAddRef(), objthis, numparams, param);
         if (!guest.IsValid()) return TJS_E_INVALIDPARAM;
 
         if (IsArray(target)) {
             tjs_int count = TJSGetArrayElementCount(target);
             for (tjs_int i = 0; i < count; ++i) {
                 tTJSVariant value;
-                target->PropGetByNum(0, i, &value, target);
+                tjs_error hr = target->PropGetByNum(TJS_IGNOREPROP, i, &value, target);
+                if (TJS_FAILED(hr)) return hr;
                 tTJSVariant key(i);
-                guest.Call(value, key);
+                if (!guest.Call(key, value)) break;
             }
-            return TJS_S_OK;
+        } else {
+            EnumForwarder forwarder(guest);
+            tTJSVariantClosure callback(&forwarder, nullptr);
+            tjs_error hr = target->EnumMembers(TJS_IGNOREPROP, &callback, target);
+            if (TJS_FAILED(hr)) return hr;
         }
-        EnumForwarder forwarder(guest);
-        tTJSVariantClosure callback(&forwarder, nullptr);
-        // Flags 0, not `TJS_IGNOREPROP`: a member that is reached through a
-        // property call (KAG's `names` dictionaries are full of them) fails to
-        // read with property invoking off, and `EnumMembers` then stops after
-        // the first member without reporting anything.
-        return target->EnumMembers(0, &callback, target);
+        if (result) *result = guest.Result;
+        return TJS_S_OK;
     }
 
-    /// `Scripts.getObjectKeys(collection)` -> array of the keys `foreach`
-    /// would pass, in the same order: `0..length-1` for an array, the member
-    /// names otherwise.
     static tjs_error TJS_INTF_METHOD getObjectKeys(
         tTJSVariant *result, tjs_int numparams, tTJSVariant **param, iTJSDispatch2 *objthis) {
         if (numparams < 1) return TJS_E_BADPARAMCOUNT;
@@ -134,16 +177,11 @@ struct ScriptsExt {
         tjs_int array_count = -1;
         if (iTJSDispatch2 *target = ObjectOf(param[0])) {
             if (IsArray(target)) {
-                // Nothing to enumerate: an array's own elements are not
-                // members, and its `EnumMembers` reports nothing (tjsArray.h
-                // says "currently not implemented"). Its keys are its indices,
-                // which is also what `foreach` hands the callback.
+                // Array elements do not implement EnumMembers.
                 array_count = TJSGetArrayElementCount(target);
             } else {
                 tTJSVariantClosure callback(&collector, nullptr);
-                // `TJS_ENUM_NO_VALUE`: only the names are wanted, and not
-                // reading the members keeps a member that is reached through a
-                // property call from aborting the walk (see `foreach` above).
+                // Enumerating names must not invoke property getters.
                 tjs_error hr = target->EnumMembers(TJS_ENUM_NO_VALUE, &callback, target);
                 if (TJS_FAILED(hr) && hr != TJS_E_NOTIMPL) return hr;
             }
@@ -176,6 +214,7 @@ struct ScriptsExt {
 #define NCB_MODULE_NAME TJS_W("yz_scripts_ext.dll")
 
 NCB_ATTACH_CLASS(ScriptsExt, Scripts) {
+    NCB_METHOD(clone);
     RawCallback("foreach", &ScriptsExt::foreach, TJS_STATICMEMBER);
     RawCallback("getObjectKeys", &ScriptsExt::getObjectKeys, TJS_STATICMEMBER);
 }

@@ -2,7 +2,8 @@
 
 struct TextOutline {
     Path path;
-    double originX=0,originY=0,advance=0,lineHeight=0;
+    double originX=0,originY=0,advance=0,lineHeight=0,height=0;
+    GeometryRect bounds{};
     GeometryPoint convert(const FT_Vector &p) const { return {originX+p.x/64.0,originY-p.y/64.0}; }
     static int move(const FT_Vector *to,void *user) {
         auto &self=*static_cast<TextOutline*>(user);
@@ -25,20 +26,22 @@ struct TextOutline {
         tFreeTypeFace holder(font.resolvedFamily(),font.native().Flags);
         holder.SetHeight(static_cast<int>(font.size));
         auto face=holder.GetBaseFace()->GetFTFace();
+        if(FT_Set_Char_Size(face,0,static_cast<FT_F26Dot6>(std::round(font.size*64)),72,72))
+            TVPThrowExceptionMessage(TJS_W("Could not set font size"));
         originX=x; originY=y+holder.GetAscent(); lineHeight=face->size->metrics.height/64.0;
         FT_Int32 loadFlags=FT_LOAD_NO_BITMAP;
         if(hint==2 || hint==4) loadFlags|=FT_LOAD_NO_HINTING|FT_LOAD_NO_AUTOHINT;
         if(hint==1 || hint==2) loadFlags|=FT_LOAD_TARGET_MONO;
         FT_Outline_Funcs funcs{move,line,conic,cubic,0,0};
         auto characters=text.c_str();
-        double lineStart=x,maxAdvance=0;
+        double lineStart=x,maxAdvance=0,firstLineY=y;
         for(int i=0;i<text.GetLen();++i) {
             unsigned code=characters[i];
             if(code>=0xd800 && code<=0xdbff && i+1<text.GetLen() && characters[i+1]>=0xdc00 && characters[i+1]<=0xdfff)
                 code=0x10000+((code-0xd800)<<10)+(characters[++i]-0xdc00);
             if(code=='\r') continue;
             if(code=='\n') {
-                decorate(font,holder,lineStart,y,maxAdvance);
+                decorate(font,holder,lineStart,y,originX-lineStart);
                 originX=x; y+=lineHeight; originY=y+holder.GetAscent(); continue;
             }
             auto glyph=FT_Get_Char_Index(face,code);
@@ -53,7 +56,8 @@ struct TextOutline {
             originX+=face->glyph->advance.x/64.0;
             maxAdvance=std::max(maxAdvance,originX-x);
         }
-        decorate(font,holder,lineStart,y,maxAdvance); advance=maxAdvance;
+        decorate(font,holder,lineStart,y,originX-lineStart); advance=maxAdvance; height=y+lineHeight-firstLineY;
+        bounds=path.bounds();
     }
     void decorate(const Font &font,const tFreeTypeFace &holder,double x,double y,double width) {
         int position=0,thickness=0;

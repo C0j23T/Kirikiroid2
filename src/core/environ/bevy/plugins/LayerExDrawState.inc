@@ -1,28 +1,20 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
-struct RecordedDraw {
-    Path path;
-    Appearance appearance;
-    Matrix transform;
-    int smoothingMode;
-    int aliasing=-1;
-};
-
 struct DrawState {
     iTJSDispatch2 *owner;
     Matrix transform,viewTransform;
     bool updateWhenDraw=true;
     int smoothingMode=4,textRenderingHint=4;
-    bool recording=false,replaying=false;
-    tjs_uint32 recordBackground=0;
-    std::vector<RecordedDraw> records;
+    bool recording=false;
+    std::shared_ptr<DrawRecord> record;
     explicit DrawState(iTJSDispatch2 *owner):owner(owner) {}
     bool getRecord() const { return recording; }
-    void setRecord(bool value) { if(recording!=value) { records.clear(); recordBackground=0; recording=value; } }
+    void setRecord(bool value);
+    void clearRecord(tjs_uint32 background);
     bool redrawRecord();
     tTJSVariant getRecordImage();
-    bool saveRecord(ttstr) { TVPThrowExceptionMessage(TJS_W("EMF+ record encoding is not supported")); return false; }
-    bool loadRecord(ttstr) { TVPThrowExceptionMessage(TJS_W("EMF+ record decoding is not supported")); return false; }
+    bool saveRecord(ttstr name);
+    bool loadRecord(ttstr name);
     bool getUpdate() const { return updateWhenDraw; }
     void setUpdate(bool value) { updateWhenDraw=value; }
     int getSmoothing() const { return smoothingMode; }
@@ -92,10 +84,10 @@ static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLaye
     layer->IndependMainImage();
     auto image=layer->GetMainImage(); operation.target=TVPBevyTextureID(image->GetTexture());
     if(krkr_layer_ex_draw(&operation)) TVPThrowExceptionMessage(TJS_W("LayerExDraw GPU operation failed"));
-    if(state->recording && !state->replaying) {
-        RecordedDraw record{path,appearance,state->transform,state->smoothingMode,aliasing};
-        for(auto &paint:record.appearance.paints) if(paint.image) paint.image=std::make_shared<tTVPBaseTexture>(*paint.image);
-        state->records.push_back(std::move(record));
+    if(state->recording) {
+        std::copy(state->transform.elements.begin(),state->transform.elements.end(),operation.transform);
+        if(krkr_layer_ex_record_append(state->record->id,&operation,state->smoothingMode))
+            TVPThrowExceptionMessage(TJS_W("Could not append drawing record"));
     }
     TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
     if(state->updateWhenDraw) layer->Update();
@@ -119,23 +111,64 @@ static void clearDrawingLayer(tTJSNI_BaseLayer *layer,tjs_uint32 color) {
     TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
 }
 
+void DrawState::clearRecord(tjs_uint32 background) {
+    if(!recording) return;
+    auto image=drawingLayer(owner)->GetMainImage();
+    uint64_t id=0;
+    if(krkr_layer_ex_record_create(image->GetWidth(),image->GetHeight(),background,&id))
+        TVPThrowExceptionMessage(TJS_W("Could not create drawing record"));
+    record=std::make_shared<DrawRecord>(id);
+}
+
+void DrawState::setRecord(bool value) {
+    if(recording==value) return;
+    if(value) {
+        recording=true;
+        try { clearRecord(0); } catch(...) { recording=false; throw; }
+    } else { record.reset(); recording=false; }
+}
+
 bool DrawState::redrawRecord() {
-    if(!recording || replaying) return false;
-    auto layer=drawingLayer(owner); auto original=transform; int originalSmoothing=smoothingMode;
-    bool originalUpdate=updateWhenDraw; replaying=true; updateWhenDraw=false;
-    try {
-        clearDrawingLayer(layer,recordBackground);
-        for(const auto &record:records) { transform=record.transform; smoothingMode=record.smoothingMode; drawPath(nullptr,owner,layer,record.path,record.appearance,record.aliasing); }
-    } catch(...) { transform=original; smoothingMode=originalSmoothing; updateWhenDraw=originalUpdate; replaying=false; throw; }
-    transform=original; smoothingMode=originalSmoothing; updateWhenDraw=originalUpdate; replaying=false;
+    if(!recording || !record) return false;
+    auto layer=drawingLayer(owner); clearDrawingLayer(layer,0);
+    auto clip=layer->GetClip(); int32_t rect[4]={clip.left,clip.top,clip.right,clip.bottom};
+    auto type=layer->GetType(); unsigned alpha=type==ltAddAlpha ? 1 : type==ltOpaque ? 2 : 0;
+    if(krkr_layer_ex_record_replay(record->id,TVPBevyTextureID(layer->GetMainImage()->GetTexture()),rect,viewTransform.elements.data(),alpha))
+        TVPThrowExceptionMessage(TJS_W("Could not replay drawing record"));
+    TVPBevyInvalidateTexture(layer->GetMainImage()->GetTexture()); layer->SetImageModified(true);
     if(updateWhenDraw) layer->Update();
     return true;
 }
 
 tTJSVariant DrawState::getRecordImage() {
-    if(!recording) return tTJSVariant();
-    redrawRecord();
-    return boxed(new Image(std::make_shared<tTVPBaseTexture>(*drawingLayer(owner)->GetMainImage())));
+    if(!recording || !record) return tTJSVariant();
+    uint64_t id=0;
+    if(krkr_layer_ex_record_clone(record->id,&id)) TVPThrowExceptionMessage(TJS_W("Could not clone drawing record"));
+    return boxed(new Image(std::make_shared<DrawRecord>(id)));
+}
+
+bool DrawState::saveRecord(ttstr name) {
+    if(!recording || !record) return false;
+    void *bytes=nullptr; size_t length=0;
+    if(krkr_layer_ex_record_encode(record->id,&bytes,&length)) TVPThrowExceptionMessage(TJS_W("Could not encode EMF+ record"));
+    try {
+        std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_WRITE));
+        stream->WriteBuffer(bytes,length);
+    } catch(...) { krkr_layer_ex_record_free(bytes,length); throw; }
+    krkr_layer_ex_record_free(bytes,length); return true;
+}
+
+bool DrawState::loadRecord(ttstr name) {
+    std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_READ));
+    auto length=stream->GetSize();
+    if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Metafile is too large"));
+    std::vector<unsigned char> bytes(static_cast<size_t>(length)); stream->ReadBuffer(bytes.data(),bytes.size());
+    uint64_t id=0;
+    if(krkr_layer_ex_record_decode(bytes.data(),bytes.size(),&id)) TVPThrowExceptionMessage(TJS_W("Could not decode EMF+ record"));
+    auto previous=record; bool wasRecording=recording;
+    record=std::make_shared<DrawRecord>(id); recording=true;
+    try { redrawRecord(); } catch(...) { record=previous; recording=wasRecording; throw; }
+    return true;
 }
 
 template<int Kind> static tjs_error TJS_INTF_METHOD shapeOperation(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
@@ -181,8 +214,14 @@ template<int Kind> static tjs_error TJS_INTF_METHOD imageOperation(tTJSVariant *
     if(!obj || TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,reinterpret_cast<iTJSNativeInstance**>(&layer))) || !layer || !layer->GetMainImage())
         return TJS_E_INVALIDPARAM;
     constexpr int source=Kind==0 || Kind==1 ? 2 : Kind==2 ? 4 : 0;
-    auto image=Image::read(*p[source]);
-    GeometryRect crop{0,0,double(image->GetWidth()),double(image->GetHeight())};
+    std::unique_ptr<Image> loaded;
+    Image *native=nullptr;
+    if(p[source]->Type()==tvtObject) native=ncbInstanceAdaptor<Image>::GetNativeInstance(p[source]->AsObjectNoAddRef());
+    else if(p[source]->Type()==tvtString) { loaded=std::make_unique<Image>(); loaded->load(ttstr(*p[source])); native=loaded.get(); }
+    std::shared_ptr<tTVPBaseTexture> image;
+    if(!native || !native->record) image=native && native->texture ? native->texture : Image::read(*p[source]);
+    GeometryRect crop{0,0,native ? double(native->GetWidth()) : double(image->GetWidth()),native ? double(native->GetHeight()) : double(image->GetHeight())};
+    if(native && native->record) { auto info=native->record->info(); crop={info.bounds[0],info.bounds[1],info.bounds[2],info.bounds[3]}; }
     if constexpr(Kind>0) {
         constexpr int first=Kind==1 ? 3 : Kind==2 ? 5 : 1;
         crop={coordinate(*p[first]),coordinate(*p[first+1]),coordinate(*p[first+2]),coordinate(*p[first+3])};
@@ -198,6 +237,24 @@ template<int Kind> static tjs_error TJS_INTF_METHOD imageOperation(tTJSVariant *
         if(p[5]->AsInteger()) std::copy(a,a+6,matrix.elements.begin());
         else matrix.elements={(a[2]-a[0])/crop.width,(a[3]-a[1])/crop.width,
                               (a[4]-a[0])/crop.height,(a[5]-a[1])/crop.height,a[0],a[1]};
+    }
+    if(native && native->record) {
+        auto state=DrawState::get(obj);
+        if(state->recording) TVPThrowExceptionMessage(TJS_W("Recording nested metafile images is not supported"));
+        Matrix offset; offset.translate(-crop.x,-crop.y,1);
+        auto view=BevyDrawGeometry::Matrix::product(BevyDrawGeometry::Matrix::product(offset,matrix),
+            BevyDrawGeometry::Matrix::product(state->transform,state->viewTransform));
+        auto clip=layer->GetClip(); int32_t clipRect[4]={clip.left,clip.top,clip.right,clip.bottom};
+        double sourceRect[4]={crop.x,crop.y,crop.width,crop.height};
+        auto type=layer->GetType(); unsigned alpha=type==ltAddAlpha ? 1 : type==ltOpaque ? 2 : 0;
+        layer->IndependMainImage(); auto target=layer->GetMainImage();
+        if(krkr_layer_ex_record_draw(native->record->id,TVPBevyTextureID(target->GetTexture()),clipRect,view.elements.data(),alpha,sourceRect))
+            TVPThrowExceptionMessage(TJS_W("Could not draw metafile image"));
+        TVPBevyInvalidateTexture(target->GetTexture()); layer->SetImageModified(true); if(state->updateWhenDraw) layer->Update();
+        auto a=view.apply({crop.x,crop.y}),b=view.apply({crop.right(),crop.y}),c=view.apply({crop.right(),crop.bottom()}),d=view.apply({crop.x,crop.bottom()});
+        double left=std::min({a.x,b.x,c.x,d.x}),top=std::min({a.y,b.y,c.y,d.y});
+        if(result) *result=rect(left,top,std::max({a.x,b.x,c.x,d.x})-left,std::max({a.y,b.y,c.y,d.y})-top);
+        return TJS_S_OK;
     }
     Path path;
     auto a=matrix.apply({0,0}),b=matrix.apply({crop.width,0}),c=matrix.apply({crop.width,crop.height}),d=matrix.apply({0,crop.height});

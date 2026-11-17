@@ -75,9 +75,26 @@ struct TVPBevyLayerExDraw {
 // All pointers remain readable until return; the host copies complete operations.
 extern "C" int krkr_layer_ex_draw(TVPBevyLayerExDraw *operation);
 
+struct TVPBevyDrawRecordInfo {
+    uint32_t width,height,background_argb,operation_count;
+    double bounds[4];
+};
+
+extern "C" int krkr_layer_ex_record_create(uint32_t width,uint32_t height,uint32_t background,uint64_t *record);
+extern "C" int krkr_layer_ex_record_append(uint64_t record,const TVPBevyLayerExDraw *operation,uint32_t smoothing);
+extern "C" int krkr_layer_ex_record_decode(const void *bytes,size_t length,uint64_t *record);
+extern "C" int krkr_layer_ex_record_encode(uint64_t record,void **bytes,size_t *length);
+extern "C" int krkr_layer_ex_record_replay(uint64_t record,uint64_t target,const int32_t *clip,const double *view,uint32_t alpha_mode);
+extern "C" int krkr_layer_ex_record_draw(uint64_t record,uint64_t target,const int32_t *clip,const double *view,uint32_t alpha_mode,const double *source_rect);
+extern "C" int krkr_layer_ex_record_clone(uint64_t record,uint64_t *copy);
+extern "C" int krkr_layer_ex_record_query(uint64_t record,TVPBevyDrawRecordInfo *info);
+extern "C" void krkr_layer_ex_record_release(uint64_t record);
+extern "C" void krkr_layer_ex_record_free(void *bytes,size_t length);
+
 static_assert(sizeof(TVPBevyDrawPathElement)==56);
 static_assert(sizeof(TVPBevyDrawColorStop)==16);
 static_assert(sizeof(TVPBevyDrawPaint)==392);
 static_assert(offsetof(TVPBevyDrawPaint,tile)==200);
 static_assert(offsetof(TVPBevyDrawPaint,start_arrow)==328);
 static_assert(sizeof(TVPBevyLayerExDraw)==144);
+static_assert(sizeof(TVPBevyDrawRecordInfo)==48);
