@@ -14,6 +14,8 @@ struct TVPBevyDrawColorStop {
     uint32_t reserved;
 };
 
+struct TVPBevyDrawPoint { double x,y; };
+
 struct TVPBevyDrawPaint {
     uint32_t brush_type;
     uint32_t stroke;
@@ -37,6 +39,22 @@ struct TVPBevyDrawPaint {
     uint32_t dash_count;
     uint32_t reserved;
     const double *dashes;
+    double tile[4];
+    double center[2];
+    double focus[2];
+    uint32_t brush_point_count;
+    uint32_t surround_count;
+    const TVPBevyDrawPoint *brush_points;
+    const uint32_t *surround_colors;
+    uint32_t blend_count;
+    uint32_t brush_flags;
+    const double *blend_positions;
+    const double *blend_factors;
+    uint32_t compound_count;
+    uint32_t reserved2;
+    const double *compound;
+    double start_arrow[4];
+    double end_arrow[4];
 };
 
 struct TVPBevyLayerExDraw {
@@ -59,5 +77,7 @@ extern "C" int krkr_layer_ex_draw(TVPBevyLayerExDraw *operation);
 
 static_assert(sizeof(TVPBevyDrawPathElement)==56);
 static_assert(sizeof(TVPBevyDrawColorStop)==16);
-static_assert(sizeof(TVPBevyDrawPaint)==200);
+static_assert(sizeof(TVPBevyDrawPaint)==392);
+static_assert(offsetof(TVPBevyDrawPaint,tile)==200);
+static_assert(offsetof(TVPBevyDrawPaint,start_arrow)==328);
 static_assert(sizeof(TVPBevyLayerExDraw)==144);
