@@ -98,6 +98,8 @@ void TVPBevyExportStorageFunctions() {
     EXPORT("iTJSTextReadStream * ::TVPCreateTextStreamForRead(const ttstr &,const ttstr &)",TVPCreateTextStreamForRead);
     EXPORT("iTJSTextWriteStream * ::TVPCreateTextStreamForWrite(const ttstr &,const ttstr &)",TVPCreateTextStreamForWrite);
     EXPORT("ttstr ::TVPGetPlacedPath(const ttstr &)",TVPGetPlacedPath);
+    EXPORT("void ::TVPGetLocalName(ttstr &)",TVPGetLocalName);
+    EXPORT("ttstr ::TVPExtractStorageName(const ttstr &)",TVPExtractStorageName);
     EXPORT("ttstr ::TVPGetLocallyAccessibleName(const ttstr &)",TVPGetLocallyAccessibleName);
     EXPORT("bool ::TVPIsExistentStorageNoSearch(const ttstr &)",TVPIsExistentStorageNoSearch);
     EXPORT("bool ::TVPIsExistentStorage(const ttstr &)",TVPIsExistentStorage);

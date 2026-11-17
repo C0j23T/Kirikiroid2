@@ -165,6 +165,10 @@ static void *TVPBevyLookupFunction(const std::string &name)
     if(name == "tjs_char * ::TJS_strrchr(const tjs_char *,tjs_char)") return reinterpret_cast<void *>(TJS_strrchr);
     if(name == "tjs_char * ::TJS_strchr(const tjs_char *,tjs_char)") return reinterpret_cast<void *>(TJS_strchr);
     if(name == "tjs_int ::TJS_strncmp(const tjs_char *,const tjs_char *,size_t)") return reinterpret_cast<void *>(TJS_strncmp);
+    if(name == "tjs_int ::TJS_stricmp(const tjs_char *,const tjs_char *)") return reinterpret_cast<void *>(TJS_stricmp);
+    if(name == "tjs_char * ::TJS_strstr(const tjs_char *,const tjs_char *)") return reinterpret_cast<void *>(TJS_strstr);
+    if(name == "tjs_char * ::TJS_strncpy(tjs_char * __restrict,const tjs_char * __restrict,size_t)") return reinterpret_cast<void *>(TJS_strncpy);
+    if(name == "void ::TJS_strcpy(tjs_char *,const tjs_char *)") return reinterpret_cast<void *>(TJS_strcpy);
     if(name == "iTJSDispatch2 * ::TVPGetScriptDispatch()") return reinterpret_cast<void *>(TVPGetScriptDispatch);
     if(name == "void ::TVPExecuteExpression(const ttstr &,tTJSVariant *)")
         return reinterpret_cast<void *>(static_cast<void (*)(const ttstr &,tTJSVariant *)>(TVPExecuteExpression));
@@ -198,6 +202,12 @@ static void *TVPBevyLookupFunction(const std::string &name)
         return reinterpret_cast<void *>(TVPDoTryBlock);
     if (name == "void ::TVPThrowExceptionMessage(const tjs_char *)")
         return reinterpret_cast<void *>(static_cast<void (*)(const tjs_char *)>(TVPThrowExceptionMessage));
+    if (name == "void ::TVPThrowExceptionMessage(const tjs_char *,const ttstr &)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const tjs_char *,const ttstr &)>(TVPThrowExceptionMessage));
+    if (name == "void ::TVPThrowExceptionMessage(const tjs_char *,const ttstr &,tjs_int)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const tjs_char *,const ttstr &,tjs_int)>(TVPThrowExceptionMessage));
+    if (name == "void ::TVPThrowExceptionMessage(const tjs_char *,const ttstr &,const ttstr &)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const tjs_char *,const ttstr &,const ttstr &)>(TVPThrowExceptionMessage));
     if (name == "void ::TVPThrowPluginUnboundFunctionError(const char *)")
         return reinterpret_cast<void *>(static_cast<void (*)(const char *)>(TVPThrowPluginUnboundFunctionError));
     if (name == "void * ::TVP_malloc(size_t)") return reinterpret_cast<void *>(TVP_malloc);
