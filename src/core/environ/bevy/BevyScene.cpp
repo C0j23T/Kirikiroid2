@@ -47,21 +47,58 @@ struct TVPBevyScene
     }
 
     static void Composite(tTVPBaseTexture &target, tTVPBaseTexture &source, int x,
-                          int y, int type, int opacity)
+                          int y, int type, int opacity, const tTVPRect &dirty)
     {
+        const int left = std::max({dirty.left, 0, x});
+        const int top = std::max({dirty.top, 0, y});
+        const int right = static_cast<int>(std::min<int64_t>(
+            std::min<int64_t>(dirty.right, target.GetWidth()),
+            int64_t(x) + source.GetWidth()));
+        const int bottom = static_cast<int>(std::min<int64_t>(
+            std::min<int64_t>(dirty.bottom, target.GetHeight()),
+            int64_t(y) + source.GetHeight()));
+        if (left >= right || top >= bottom)
+            return;
         TVPBevyRenderCommand command{};
         command.operation = 5;
         command.target =
             TVPBevyTextureID(target.GetTextureForRender(true, nullptr));
         command.sources[0] = TVPBevyTextureID(source.GetTexture());
-        command.rect[0] = x;
-        command.rect[1] = y;
-        command.rect[2] = x + source.GetWidth();
-        command.rect[3] = y + source.GetHeight();
+        command.rect[0] = left;
+        command.rect[1] = top;
+        command.rect[2] = right;
+        command.rect[3] = bottom;
+        command.source_rects[0][0] = int64_t(left) - x;
+        command.source_rects[0][1] = int64_t(top) - y;
+        command.source_rects[0][2] = int64_t(right) - x;
+        command.source_rects[0][3] = int64_t(bottom) - y;
         command.parameters[0] = opacity;
         command.parameters[1] = type;
         if (krkr_render_dispatch(&command))
             throw std::runtime_error("Bevy layer composition failed");
+    }
+
+    static void DrawMainImage(tTVPBaseTexture &target, tTJSNI_BaseLayer &layer,
+                              const tTVPRect &dirty, bool full_main_image)
+    {
+        if (!full_main_image)
+            target.Fill(dirty, layer.DisplayType == ltOpaque
+                                   ? layer.NeutralColor | 0xff000000
+                                   : 0);
+        if (!layer.MainImage || layer.DisplayType == ltBinder)
+            return;
+        const int left = std::max(dirty.left, layer.ImageLeft);
+        const int top = std::max(dirty.top, layer.ImageTop);
+        const int right = static_cast<int>(std::min<int64_t>(
+            dirty.right, int64_t(layer.ImageLeft) + layer.MainImage->GetWidth()));
+        const int bottom = static_cast<int>(std::min<int64_t>(
+            dirty.bottom, int64_t(layer.ImageTop) + layer.MainImage->GetHeight()));
+        if (left < right && top < bottom)
+            target.CopyRect(left, top, layer.MainImage,
+                            tTVPRect(left - layer.ImageLeft,
+                                     top - layer.ImageTop,
+                                     right - layer.ImageLeft,
+                                     bottom - layer.ImageTop));
     }
 
     static std::vector<tTJSNI_BaseLayer *> Children(tTJSNI_BaseLayer &layer)
@@ -98,8 +135,8 @@ struct TVPBevyScene
     }
 
     void DrawChildren(tTVPBaseTexture &target, tTJSNI_BaseLayer &parent,
-                      const tTVPRect *primary_dirty, int64_t primary_x,
-                      int64_t primary_y)
+                      const tTVPRect &dirty, const tTVPRect *primary_dirty,
+                      int64_t primary_x, int64_t primary_y)
     {
         for (auto child : Children(parent))
         {
@@ -116,7 +153,7 @@ struct TVPBevyScene
             auto image = Build(*child, true, true, primary_dirty, child_x,
                                child_y);
             Composite(target, *image, child->GetLeft(), child->GetTop(),
-                      child->DisplayType, child->Opacity);
+                      child->DisplayType, child->Opacity, dirty);
         }
     }
 
@@ -135,6 +172,21 @@ struct TVPBevyScene
         } scope{Painting, &layer};
         bool active =
             transition && layer.InTransition && layer.DivisibleTransHandler;
+        if (active)
+            primary_dirty = nullptr;
+        tTVPRect dirty(0, 0, layer.GetWidth(), layer.GetHeight());
+        if (primary_dirty)
+        {
+            const auto local = [](int edge, int64_t origin, int extent)
+            {
+                return static_cast<int>(std::max<int64_t>(
+                    0, std::min<int64_t>(extent, int64_t(edge) - origin)));
+            };
+            dirty.left = local(primary_dirty->left, primary_x, layer.GetWidth());
+            dirty.top = local(primary_dirty->top, primary_y, layer.GetHeight());
+            dirty.right = local(primary_dirty->right, primary_x, layer.GetWidth());
+            dirty.bottom = local(primary_dirty->bottom, primary_y, layer.GetHeight());
+        }
         const bool fullMainImage = layer.MainImage &&
                                    layer.DisplayType != ltBinder &&
                                    layer.MainImage->Is32BPP() &&
@@ -145,15 +197,7 @@ struct TVPBevyScene
             return std::make_unique<tTVPBaseTexture>(*layer.MainImage);
         auto result =
             std::make_unique<tTVPBaseTexture>(layer.GetWidth(), layer.GetHeight());
-        tTVPRect rect(0, 0, layer.GetWidth(), layer.GetHeight());
-        if (!fullMainImage)
-            result->Fill(rect, layer.DisplayType == ltOpaque
-                                   ? layer.NeutralColor | 0xff000000
-                                   : 0);
-        if (layer.MainImage && layer.DisplayType != ltBinder)
-            result->CopyRect(layer.ImageLeft, layer.ImageTop, layer.MainImage,
-                             tTVPRect(0, 0, layer.MainImage->GetWidth(),
-                                      layer.MainImage->GetHeight()));
+        DrawMainImage(*result, layer, dirty, fullMainImage);
 
         if (active)
         {
@@ -164,18 +208,12 @@ struct TVPBevyScene
             {
                 layer.StopTransitionByHandler();
                 active = false;
-                if (!fullMainImage)
-                    result->Fill(rect, layer.DisplayType == ltOpaque
-                                           ? layer.NeutralColor | 0xff000000
-                                           : 0);
-                if (layer.MainImage)
-                    result->CopyRect(layer.ImageLeft, layer.ImageTop, layer.MainImage,
-                                     tTVPRect(0, 0, layer.MainImage->GetWidth(),
-                                              layer.MainImage->GetHeight()));
+                DrawMainImage(*result, layer, dirty, fullMainImage);
             }
         }
         if (children && (!active || layer.TransWithChildren))
-            DrawChildren(*result, layer, primary_dirty, primary_x, primary_y);
+            DrawChildren(*result, layer, dirty, primary_dirty, primary_x,
+                         primary_y);
         if (active)
         {
             if (!layer.TransSrc)
@@ -198,7 +236,7 @@ struct TVPBevyScene
             else if (data.Dest == &destination)
                 result = std::move(output);
             if (children && !layer.TransWithChildren)
-                DrawChildren(*result, layer, primary_dirty, primary_x,
+                DrawChildren(*result, layer, dirty, primary_dirty, primary_x,
                              primary_y);
             if (layer.DivisibleTransHandler->EndProcess() != TJS_S_TRUE)
                 layer.StopTransitionByHandler();
