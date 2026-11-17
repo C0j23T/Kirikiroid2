@@ -585,7 +585,6 @@ void TVPLoadPlugin(const ttstr & name)
 {
 	const std::set<ttstr> ignoredPlugins = {
 		TJS_W("expat.dll"),
-		TJS_W("lzfs.dll"),
 		TJS_W("kagparserex.dll"),
 		TJS_W("krmovie.dll"),
 		TJS_W("util.dll"),
