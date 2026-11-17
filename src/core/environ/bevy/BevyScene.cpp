@@ -9,6 +9,7 @@
 #include "tjsCommHead.h"
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
@@ -96,20 +97,33 @@ struct TVPBevyScene
         return false;
     }
 
-    void DrawChildren(tTVPBaseTexture &target, tTJSNI_BaseLayer &parent)
+    void DrawChildren(tTVPBaseTexture &target, tTJSNI_BaseLayer &parent,
+                      const tTVPRect *primary_dirty, int64_t primary_x,
+                      int64_t primary_y)
     {
         for (auto child : Children(parent))
         {
             if (!child->IsSeen() || !child->GetWidth() || !child->GetHeight())
                 continue;
-            auto image = Build(*child);
+            const int64_t child_x = primary_x + child->GetLeft();
+            const int64_t child_y = primary_y + child->GetTop();
+            if (primary_dirty &&
+                (child_x >= primary_dirty->right ||
+                 child_y >= primary_dirty->bottom ||
+                 child_x + child->GetWidth() <= primary_dirty->left ||
+                 child_y + child->GetHeight() <= primary_dirty->top))
+                continue;
+            auto image = Build(*child, true, true, primary_dirty, child_x,
+                               child_y);
             Composite(target, *image, child->GetLeft(), child->GetTop(),
                       child->DisplayType, child->Opacity);
         }
     }
 
     std::unique_ptr<tTVPBaseTexture>
-    Build(tTJSNI_BaseLayer &layer, bool transition = true, bool children = true)
+    Build(tTJSNI_BaseLayer &layer, bool transition = true, bool children = true,
+          const tTVPRect *primary_dirty = nullptr, int64_t primary_x = 0,
+          int64_t primary_y = 0)
     {
         if (!Painting.insert(&layer).second)
             throw std::runtime_error("Cyclic layer transition");
@@ -161,7 +175,7 @@ struct TVPBevyScene
             }
         }
         if (children && (!active || layer.TransWithChildren))
-            DrawChildren(*result, layer);
+            DrawChildren(*result, layer, primary_dirty, primary_x, primary_y);
         if (active)
         {
             if (!layer.TransSrc)
@@ -184,7 +198,8 @@ struct TVPBevyScene
             else if (data.Dest == &destination)
                 result = std::move(output);
             if (children && !layer.TransWithChildren)
-                DrawChildren(*result, layer);
+                DrawChildren(*result, layer, primary_dirty, primary_x,
+                             primary_y);
             if (layer.DivisibleTransHandler->EndProcess() != TJS_S_TRUE)
                 layer.StopTransitionByHandler();
         }
@@ -292,7 +307,8 @@ uint64_t TVPBevyBuildScene(void *screen, int *width, int *height)
         SceneBuilding.store(true);
         try
         {
-            auto result = Scene.Build(*layer);
+            auto result = Scene.Build(*layer, true, true,
+                                      full_dirty ? nullptr : &dirty_rect);
             if (full_dirty)
                 dirty_rect = tTVPRect(0, 0, layer_width, layer_height);
             TVPBevyScene::CopyRegion(*Scene.Target, *result, dirty_rect);
