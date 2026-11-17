@@ -21,7 +21,7 @@ static void InitPlugin_PackinOne()
 		TJS_W("layerExRaster.dll"),
 		TJS_W("shrinkCopy.dll"),
 		TJS_W("addFont.dll"),
-		TJS_W("yz_scripts_ext.dll"),
+		TJS_W("scriptsEx.dll"),
 		TJS_W("fstat.dll"),
 		TJS_W("saveStruct.dll"),
 	};
