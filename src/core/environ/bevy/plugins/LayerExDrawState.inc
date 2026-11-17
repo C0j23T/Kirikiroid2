@@ -1,9 +1,28 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
+struct RecordedDraw {
+    Path path;
+    Appearance appearance;
+    Matrix transform;
+    int smoothingMode;
+    int aliasing=-1;
+};
+
 struct DrawState {
+    iTJSDispatch2 *owner;
     Matrix transform,viewTransform;
     bool updateWhenDraw=true;
     int smoothingMode=4,textRenderingHint=4;
+    bool recording=false,replaying=false;
+    tjs_uint32 recordBackground=0;
+    std::vector<RecordedDraw> records;
+    explicit DrawState(iTJSDispatch2 *owner):owner(owner) {}
+    bool getRecord() const { return recording; }
+    void setRecord(bool value) { if(recording!=value) { records.clear(); recordBackground=0; recording=value; } }
+    bool redrawRecord();
+    tTJSVariant getRecordImage();
+    bool saveRecord(ttstr) { TVPThrowExceptionMessage(TJS_W("EMF+ record encoding is not supported")); return false; }
+    bool loadRecord(ttstr) { TVPThrowExceptionMessage(TJS_W("EMF+ record decoding is not supported")); return false; }
     bool getUpdate() const { return updateWhenDraw; }
     void setUpdate(bool value) { updateWhenDraw=value; }
     int getSmoothing() const { return smoothingMode; }
@@ -21,15 +40,15 @@ struct DrawState {
     void rotateTransform(double value) { Path::require(transform.rotate(value,1)==0); }
     void scaleTransform(double x,double y) { Path::require(transform.scale(x,y,1)==0); }
     void translateTransform(double x,double y) { Path::require(transform.translate(x,y,1)==0); }
-    void setViewTransform(tTJSVariant value) { viewTransform=Matrix::read(value); }
-    void resetViewTransform() { viewTransform.reset(); }
-    void rotateViewTransform(double value) { Path::require(viewTransform.rotate(value,1)==0); }
-    void scaleViewTransform(double x,double y) { Path::require(viewTransform.scale(x,y,1)==0); }
-    void translateViewTransform(double x,double y) { Path::require(viewTransform.translate(x,y,1)==0); }
+    void setViewTransform(tTJSVariant value) { viewTransform=Matrix::read(value); if(recording) redrawRecord(); }
+    void resetViewTransform() { viewTransform.reset(); if(recording) redrawRecord(); }
+    void rotateViewTransform(double value) { Path::require(viewTransform.rotate(value,1)==0); if(recording) redrawRecord(); }
+    void scaleViewTransform(double x,double y) { Path::require(viewTransform.scale(x,y,1)==0); if(recording) redrawRecord(); }
+    void translateViewTransform(double x,double y) { Path::require(viewTransform.translate(x,y,1)==0); if(recording) redrawRecord(); }
     static DrawState *get(iTJSDispatch2 *obj) {
         auto state=ncbInstanceAdaptor<DrawState>::GetNativeInstance(obj);
         if(!state) {
-            state=new DrawState;
+            state=new DrawState(obj);
             if(!ncbInstanceAdaptor<DrawState>::SetAdaptorWithNativeInstance(obj,state)) {
                 delete state; TVPThrowExceptionMessage(TJS_W("Could not attach drawing state"));
             }
@@ -38,7 +57,7 @@ struct DrawState {
     }
 };
 
-static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLayer *layer,const Path &path,const Appearance &appearance) {
+static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLayer *layer,const Path &path,const Appearance &appearance,int aliasing=-1) {
     auto state=DrawState::get(obj);
     if(path.commands.size()>1000000 || appearance.paints.size()>4096)
         TVPThrowExceptionMessage(TJS_W("Drawing operation is too large"));
@@ -69,14 +88,54 @@ static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLaye
     operation.path=elements.data(); operation.path_count=elements.size(); operation.paints=paints.data(); operation.paint_count=paints.size();
     auto type=layer->GetType();
     operation.alpha_mode=type==ltAddAlpha ? 1 : type==ltOpaque ? 2 : 0;
-    operation.flags=state->smoothingMode==0 || state->smoothingMode==1 || state->smoothingMode==3;
+    operation.flags=aliasing<0 ? state->smoothingMode==0 || state->smoothingMode==1 || state->smoothingMode==3 : aliasing;
     layer->IndependMainImage();
     auto image=layer->GetMainImage(); operation.target=TVPBevyTextureID(image->GetTexture());
     if(krkr_layer_ex_draw(&operation)) TVPThrowExceptionMessage(TJS_W("LayerExDraw GPU operation failed"));
+    if(state->recording && !state->replaying) {
+        RecordedDraw record{path,appearance,state->transform,state->smoothingMode,aliasing};
+        for(auto &paint:record.appearance.paints) if(paint.image) paint.image=std::make_shared<tTVPBaseTexture>(*paint.image);
+        state->records.push_back(std::move(record));
+    }
     TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
     if(state->updateWhenDraw) layer->Update();
     if(result) *result=rect(operation.bounds[0],operation.bounds[1],operation.bounds[2],operation.bounds[3]);
     return TJS_S_OK;
+}
+
+static tTJSNI_BaseLayer *drawingLayer(iTJSDispatch2 *obj) {
+    tTJSNI_BaseLayer *layer=nullptr;
+    if(!obj || TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,reinterpret_cast<iTJSNativeInstance**>(&layer))) || !layer || !layer->GetMainImage())
+        TVPThrowExceptionMessage(TJS_W("Layer image is required"));
+    return layer;
+}
+
+static void clearDrawingLayer(tTJSNI_BaseLayer *layer,tjs_uint32 color) {
+    layer->IndependMainImage(); auto image=layer->GetMainImage();
+    TVPBevyRenderCommand command{}; command.operation=4; command.method="FillARGB";
+    command.target=TVPBevyTextureID(image->GetTexture()); command.rect[2]=image->GetWidth(); command.rect[3]=image->GetHeight();
+    for(int i=0;i<4;++i) { int shift=i==0 ? 16 : i==1 ? 8 : i==2 ? 0 : 24; command.parameters[12+i]=double((color>>shift)&255)/255; }
+    if(krkr_render_dispatch(&command)) TVPThrowExceptionMessage(TJS_W("Layer clear failed"));
+    TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
+}
+
+bool DrawState::redrawRecord() {
+    if(!recording || replaying) return false;
+    auto layer=drawingLayer(owner); auto original=transform; int originalSmoothing=smoothingMode;
+    bool originalUpdate=updateWhenDraw; replaying=true; updateWhenDraw=false;
+    try {
+        clearDrawingLayer(layer,recordBackground);
+        for(const auto &record:records) { transform=record.transform; smoothingMode=record.smoothingMode; drawPath(nullptr,owner,layer,record.path,record.appearance,record.aliasing); }
+    } catch(...) { transform=original; smoothingMode=originalSmoothing; updateWhenDraw=originalUpdate; replaying=false; throw; }
+    transform=original; smoothingMode=originalSmoothing; updateWhenDraw=originalUpdate; replaying=false;
+    if(updateWhenDraw) layer->Update();
+    return true;
+}
+
+tTJSVariant DrawState::getRecordImage() {
+    if(!recording) return tTJSVariant();
+    redrawRecord();
+    return boxed(new Image(std::make_shared<tTVPBaseTexture>(*drawingLayer(owner)->GetMainImage())));
 }
 
 template<int Kind> static tjs_error TJS_INTF_METHOD shapeOperation(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {

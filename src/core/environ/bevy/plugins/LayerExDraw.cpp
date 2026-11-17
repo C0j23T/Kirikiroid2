@@ -58,36 +58,79 @@ struct Font {
 struct Paint {
     tjs_uint32 a,b;
     double x1=0,y1=0,x2=1,y2=0,width=0,ox=0,oy=0;
-    int wrap=0; bool gradient=false,pen=false;
+    int wrap=0; bool gradient=false,pen=false; unsigned brushType=0,hatch=0,brushFlags=0;
     Matrix matrix;
     double miterLimit=10,dashOffset=0;
     unsigned startCap=0,endCap=0,dashCap=0,join=0,alignment=0;
     std::vector<double> dashes;
     std::vector<TVPBevyDrawColorStop> stops;
     std::shared_ptr<tTVPBaseTexture> image;
+    std::array<double,4> tile{},startArrow{},endArrow{};
+    std::array<double,2> center{},focus{};
+    std::vector<TVPBevyDrawPoint> brushPoints;
+    std::vector<uint32_t> surroundColors;
+    std::vector<double> blendPositions,blendFactors,compound;
     TVPBevyDrawPaint operation() const {
         TVPBevyDrawPaint p{};
-        p.brush_type=image ? 2 : gradient ? 4 : 0; p.stroke=pen; p.colors[0]=a; p.colors[1]=b;
+        p.brush_type=image ? 2 : gradient ? 4 : brushType; p.stroke=pen; p.colors[0]=a; p.colors[1]=b; p.hatch=hatch;
         p.image=image ? TVPBevyTextureID(image->GetTexture()) : 0;
         p.wrap=wrap; p.coordinates[0]=x1; p.coordinates[1]=y1; p.coordinates[2]=x2; p.coordinates[3]=y2;
         std::copy(matrix.elements.begin(),matrix.elements.end(),p.paint_transform);
         p.offset[0]=ox; p.offset[1]=oy; p.width=width; p.miter_limit=miterLimit; p.dash_offset=dashOffset;
         p.start_cap=startCap; p.end_cap=endCap; p.dash_cap=dashCap; p.join=join; p.alignment=alignment;
         p.stop_count=stops.size(); p.stops=stops.data(); p.dash_count=dashes.size(); p.dashes=dashes.data();
+        std::copy(tile.begin(),tile.end(),p.tile); std::copy(center.begin(),center.end(),p.center); std::copy(focus.begin(),focus.end(),p.focus);
+        p.brush_point_count=brushPoints.size(); p.brush_points=brushPoints.data();
+        p.surround_count=surroundColors.size(); p.surround_colors=surroundColors.data();
+        p.blend_count=blendPositions.size(); p.blend_positions=blendPositions.data(); p.blend_factors=blendFactors.data(); p.brush_flags=brushFlags;
+        p.compound_count=compound.size(); p.compound=compound.data();
+        std::copy(startArrow.begin(),startArrow.end(),p.start_arrow); std::copy(endArrow.begin(),endArrow.end(),p.end_arrow);
         return p;
     }
 };
 struct Appearance {
     std::vector<Paint> paints;
     void clear() { paints.clear(); }
+    static unsigned cap(const tTJSVariant &value,double width,std::array<double,4> &arrow) {
+        if(value.Type()!=tvtObject) return value.Type()==tvtVoid ? 0 : value.AsInteger();
+        arrow={number(value,TJS_W("width"),width),number(value,TJS_W("height"),width),
+               number(value,TJS_W("middleInset"),0),number(value,TJS_W("filled"),1)!=0 ? 1.0 : 0.0};
+        for(double n:arrow) if(!std::isfinite(n)) TVPThrowExceptionMessage(TJS_W("Invalid arrow cap"));
+        return 255;
+    }
     void add(tTJSVariant color,double width,double ox,double oy,bool pen=false) {
         Paint p{}; p.width=width; p.ox=ox; p.oy=oy; p.pen=pen;
         if(!std::isfinite(width) || width<0 || width>256 || !std::isfinite(ox) || !std::isfinite(oy)) TVPThrowExceptionMessage(TJS_W("Invalid appearance dimensions"));
         if(color.Type()!=tvtObject) p.a=p.b=tjs_uint32(color.AsInteger());
         else {
             int type=number(color,TJS_W("type"),0);
+            p.brushType=type;
             if(type==0) p.a=p.b=number(color,TJS_W("color"),0xffffffff);
-            else if(type==2) {
+            else if(type==1) {
+                p.hatch=number(color,TJS_W("hatchStyle"),0); p.a=number(color,TJS_W("foreColor"),0xffffffff); p.b=number(color,TJS_W("backColor"),0xff000000);
+            } else if(type==3) {
+                auto points=pointValues(member(color,TJS_W("points")));
+                if(points.size()<3) TVPThrowExceptionMessage(TJS_W("Path gradient requires at least three points"));
+                GeometryRect bounds{points[0].x,points[0].y,0,0}; double right=bounds.x,bottom=bounds.y;
+                for(auto point:points) { p.brushPoints.push_back({point.x,point.y}); bounds.x=std::min(bounds.x,point.x); bounds.y=std::min(bounds.y,point.y); right=std::max(right,point.x); bottom=std::max(bottom,point.y); }
+                bounds.width=right-bounds.x; bounds.height=bottom-bounds.y; p.tile={bounds.x,bounds.y,bounds.width,bounds.height};
+                double area=0,cx=0,cy=0;
+                for(std::size_t i=0;i<points.size();++i) {
+                    auto a=points[i],b=points[(i+1)%points.size()]; double cross=a.x*b.y-b.x*a.y;
+                    area+=cross; cx+=(a.x+b.x)*cross; cy+=(a.y+b.y)*cross;
+                }
+                GeometryPoint defaultCenter{};
+                if(std::abs(area)>1e-12) defaultCenter={cx/(3*area),cy/(3*area)};
+                else { for(auto point:points) { defaultCenter.x+=point.x; defaultCenter.y+=point.y; } defaultCenter.x/=points.size(); defaultCenter.y/=points.size(); }
+                auto center=member(color,TJS_W("centerPoint")); auto value=center.Type()==tvtVoid ? defaultCenter : pointValue(center);
+                p.center={value.x,value.y}; p.a=number(color,TJS_W("centerColor"),0xffffffff); p.b=0xff000000;
+                auto focus=member(color,TJS_W("focusScales"));
+                if(focus.Type()!=tvtVoid) p.focus={component(focus,0,TJS_W("xScale")),component(focus,1,TJS_W("yScale"))};
+                auto surrounds=member(color,TJS_W("surroundColors"));
+                if(surrounds.Type()!=tvtVoid) for(int i=0,count=arrayCount(surrounds);i<count;++i) p.surroundColors.push_back(arrayValue(surrounds,i).AsInteger());
+                if(p.surroundColors.empty()) p.surroundColors.push_back(0xff000000);
+                p.wrap=number(color,TJS_W("wrapMode"),0);
+            } else if(type==2) {
                 p.image=Image::read(member(color,TJS_W("image"))); p.wrap=number(color,TJS_W("wrapMode"),0);
                 auto dest=member(color,TJS_W("dstRect"));
                 auto area=dest.Type()==tvtVoid ? GeometryRect{0,0,double(p.image->GetWidth()),double(p.image->GetHeight())} : rectValue(dest);
@@ -103,6 +146,7 @@ struct Appearance {
                     p.x1=from.x; p.y1=from.y; p.x2=to.x; p.y2=to.y;
                 } else if(r.Type()==tvtObject) {
                     auto rect=rectValue(r); double x=rect.x,y=rect.y,w=rect.width,h=rect.height;
+                    p.tile={x,y,w,h};
                     auto specifiedAngle=member(color,TJS_W("angle"));
                     if(specifiedAngle.Type()==tvtVoid) {
                         int mode=number(color,TJS_W("mode"),0);
@@ -117,6 +161,7 @@ struct Appearance {
                         p.x1=cx-dx*extent/2; p.y1=cy-dy*extent/2; p.x2=cx+dx*extent/2; p.y2=cy+dy*extent/2;
                     }
                 } else TVPThrowExceptionMessage(TJS_W("Linear gradient requires points or rect"));
+                if(p.tile[2]==0 || p.tile[3]==0) p.tile={std::min(p.x1,p.x2),std::min(p.y1,p.y2),std::abs(p.x2-p.x1),std::abs(p.y2-p.y1)};
                 p.wrap=number(color,TJS_W("wrapMode"),0);
                 if(p.wrap<0 || p.wrap>4) TVPThrowExceptionMessage(TJS_W("Invalid gradient wrap mode"));
                 auto transform=member(color,TJS_W("transform"));
@@ -138,6 +183,19 @@ struct Appearance {
                     if(p.stops.front().position!=0 || p.stops.back().position!=1) TVPThrowExceptionMessage(TJS_W("Gradient stops must span zero to one"));
                 }
             } else TVPThrowExceptionMessage(TJS_W("Unsupported brush type"));
+            if(type==3 || type==4) {
+                auto transform=member(color,TJS_W("transform")); if(transform.Type()!=tvtVoid) p.matrix=Matrix::read(transform);
+                p.brushFlags=number(color,TJS_W("useGammaCorrection"),0)!=0;
+                auto blend=member(color,TJS_W("blend"));
+                if(blend.Type()!=tvtVoid) {
+                    auto factors=member(blend,TJS_W("blendFactors")),positions=member(blend,TJS_W("blendPositions"));
+                    if(factors.Type()==tvtVoid) factors=arrayValue(blend,0);
+                    if(positions.Type()==tvtVoid) positions=arrayValue(blend,1);
+                    int count=arrayCount(factors);
+                    if(count<2 || count!=arrayCount(positions)) TVPThrowExceptionMessage(TJS_W("Invalid gradient blend"));
+                    for(int i=0;i<count;++i) { p.blendFactors.push_back(coordinate(arrayValue(factors,i))); p.blendPositions.push_back(coordinate(arrayValue(positions,i))); }
+                }
+            }
         }
         for(double v:{p.x1,p.y1,p.x2,p.y2}) if(!std::isfinite(v)) TVPThrowExceptionMessage(TJS_W("Invalid gradient point"));
         paints.push_back(p);
@@ -157,12 +215,16 @@ struct Appearance {
         try {
             if(p[1]->Type()==tvtObject) {
                 auto &paint=app->paints.back();
-                paint.startCap=number(*p[1],TJS_W("startCap"),0); paint.endCap=number(*p[1],TJS_W("endCap"),0);
+                paint.startCap=cap(member(*p[1],TJS_W("startCap")),width,paint.startArrow); paint.endCap=cap(member(*p[1],TJS_W("endCap")),width,paint.endArrow);
                 paint.dashCap=number(*p[1],TJS_W("dashCap"),0); paint.join=number(*p[1],TJS_W("lineJoin"),0);
                 paint.alignment=number(*p[1],TJS_W("alignment"),0); paint.miterLimit=number(*p[1],TJS_W("miterLimit"),10);
                 paint.dashOffset=number(*p[1],TJS_W("dashOffset"),0);
-                if(member(*p[1],TJS_W("compoundArray")).Type()!=tvtVoid)
-                    TVPThrowExceptionMessage(TJS_W("Compound pens are not supported"));
+                auto compound=member(*p[1],TJS_W("compoundArray"));
+                if(compound.Type()!=tvtVoid) {
+                    int count=arrayCount(compound);
+                    if(count<2 || count%2) TVPThrowExceptionMessage(TJS_W("Invalid compound pen"));
+                    for(int i=0;i<count;++i) paint.compound.push_back(coordinate(arrayValue(compound,i)));
+                }
                 auto style=member(*p[1],TJS_W("dashStyle"));
                 if(style.Type()==tvtObject) {
                     for(int i=0,count=arrayCount(style);i<count;++i) {
@@ -224,6 +286,7 @@ static tTJSVariant rect(double x,double y,double w,double h) {
 }
 #include "LayerExDrawState.inc"
 #include "LayerExDrawText.inc"
+#include "LayerExDrawReadback.inc"
 struct Layer {
     static tjs_error TJS_INTF_METHOD clear(tTJSVariant *,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
         if(count<1) return TJS_E_BADPARAMCOUNT;
@@ -240,7 +303,9 @@ struct Layer {
         c.parameters[15]=float((color>>24)&255)/255;
         if(krkr_render_dispatch(&c)) return TJS_E_FAIL;
         TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
-        if(DrawState::get(obj)->updateWhenDraw) layer->Update();
+        auto state=DrawState::get(obj);
+        if(state->recording && !state->replaying) { state->records.clear(); state->recordBackground=color; }
+        if(state->updateWhenDraw) layer->Update();
         return TJS_S_OK;
     }
     static tjs_error measureText(tTJSVariant *result,tjs_int count,tTJSVariant **p,bool internal) {
@@ -334,6 +399,7 @@ NCB_ATTACH_CLASS(BevyDrawLayer,Layer) {
     RawCallback("drawImageStretch",BevyDraw::imageOperation<2>,0); RawCallback("drawImageAffine",BevyDraw::imageOperation<3>,0);
     RawCallback("drawString",BevyDraw::textOperation<false>,0); RawCallback("drawPathString",BevyDraw::textOperation<true>,0);
     RawCallback("measureString",BevyDraw::Layer::measure,0); RawCallback("measureStringInternal",BevyDraw::Layer::measureInternal,0);
+    RawCallback("saveImage",BevyDraw::Readback::saveImage,0); RawCallback("getColorRegionRects",BevyDraw::Readback::regions,0);
 }
 NCB_GET_INSTANCE_HOOK(BevyDrawState) {
     NCB_INSTANCE_GETTER(objthis) { return BevyDraw::DrawState::get(objthis); }
@@ -345,4 +411,6 @@ NCB_ATTACH_CLASS_WITH_HOOK(BevyDrawState,Layer) {
     NCB_METHOD(scaleTransform); NCB_METHOD(translateTransform);
     NCB_METHOD(setViewTransform); NCB_METHOD(resetViewTransform); NCB_METHOD(rotateViewTransform);
     NCB_METHOD(scaleViewTransform); NCB_METHOD(translateViewTransform);
+    NCB_PROPERTY(record,getRecord,setRecord); NCB_METHOD(redrawRecord); NCB_METHOD(getRecordImage);
+    NCB_METHOD(saveRecord); NCB_METHOD(loadRecord);
 }
