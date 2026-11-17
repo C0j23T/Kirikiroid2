@@ -72,10 +72,11 @@ template<bool Outline> static tjs_error TJS_INTF_METHOD textOperation(tTJSVarian
     if(!obj || TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,reinterpret_cast<iTJSNativeInstance**>(&layer))) || !layer || !layer->GetMainImage()) return TJS_E_INVALIDPARAM;
     auto state=DrawState::get(obj);
     TextOutline text(*font,ttstr(*p[4]),coordinate(*p[2]),coordinate(*p[3]),state->textRenderingHint);
-    if constexpr(Outline) return drawPath(result,obj,layer,text.path,*app);
+    int aliasing=state->textRenderingHint==1 || state->textRenderingHint==2;
+    if constexpr(Outline) return drawPath(result,obj,layer,text.path,*app,aliasing);
     else {
         Appearance brushes;
         for(const auto &paint:app->paints) if(!paint.pen) { brushes.paints.push_back(paint); break; }
-        return drawPath(result,obj,layer,text.path,brushes);
+        return drawPath(result,obj,layer,text.path,brushes,aliasing);
     }
 }

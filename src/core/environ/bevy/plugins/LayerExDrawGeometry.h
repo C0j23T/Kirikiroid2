@@ -140,23 +140,22 @@ struct Path {
         double sweep=std::clamp(sweepAngle,-360.0,360.0);
         if(sweep==0) return true;
         double angle=std::remainder(startAngle,360.0)*0.017453292519943295;
-        int count=static_cast<int>(std::ceil(std::abs(sweep)/90.0));
-        double step=sweep*0.017453292519943295/count;
         double rx=rect.width/2,ry=rect.height/2,cx=rect.x+rx,cy=rect.y+ry;
-        auto parameter=[&](double a) { return std::atan2(rx*std::sin(a),ry*std::cos(a)); };
+        auto parameter=[&](double a) {
+            double corrected=std::atan2(rx*std::sin(a),ry*std::cos(a));
+            return a+std::remainder(corrected-a,6.283185307179586);
+        };
         auto point=[&](double a) -> Point { return {cx+rx*std::cos(a),cy+ry*std::sin(a)}; };
+        double begin=parameter(angle),end=parameter(angle+sweep*0.017453292519943295);
         if(pie) { startFigure(); move({cx,cy}); }
-        connect(point(parameter(angle)));
-        for(int i=0;i<count;++i) {
-            double end=parameter(angle+step),begin=parameter(angle);
-            double delta=std::remainder(end-begin,6.283185307179586);
-            if(step>0 && delta<0) delta+=6.283185307179586;
-            if(step<0 && delta>0) delta-=6.283185307179586;
+        connect(point(begin));
+        for(int i=0;i<4 && std::abs(end-begin)>1e-14;++i) {
+            double delta=std::clamp(end-begin,-1.5707963267948966,1.5707963267948966),next=begin+delta;
             double k=4.0/3.0*std::tan(delta/4.0);
-            Point a=point(begin),b=point(end);
+            Point a=point(begin),b=point(next);
             cubic({a.x-k*rx*std::sin(begin),a.y+k*ry*std::cos(begin)},
-                  {b.x+k*rx*std::sin(end),b.y-k*ry*std::cos(end)},b);
-            angle+=step;
+                  {b.x+k*rx*std::sin(next),b.y-k*ry*std::cos(next)},b);
+            begin=next;
         }
         if(pie) closeFigure();
         return true;

@@ -2,12 +2,23 @@
 
 struct Image {
     std::shared_ptr<tTVPBaseTexture> texture;
+    double dpiX=96,dpiY=96;
     mutable int status=0;
     Image()=default;
     explicit Image(std::shared_ptr<tTVPBaseTexture> value):texture(std::move(value)) {}
     void load(ttstr name) {
         auto value=std::make_shared<tTVPBaseTexture>(1,1);
-        TVPLoadGraphic(value.get(),name,TVP_clNone,0,0,glmNormal);
+        iTJSDispatch2 *metadata=nullptr;
+        TVPLoadGraphic(value.get(),name,TVP_clNone,0,0,glmNormal,nullptr,&metadata);
+        double x=96,y=96;
+        if(metadata) {
+            tTJSVariant info(metadata,metadata); metadata->Release();
+            if(ttstr(member(info,TJS_W("reso_unit")))==TJS_W("meter")) {
+                x=number(info,TJS_W("reso_x"),96/0.0254)*0.0254;
+                y=number(info,TJS_W("reso_y"),96/0.0254)*0.0254;
+            }
+        }
+        dpiX=x; dpiY=y;
         texture=std::move(value);
     }
     static tjs_error TJS_INTF_METHOD create(Image **result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *) {
@@ -18,14 +29,15 @@ struct Image {
     }
     unsigned GetWidth() const { return texture ? texture->GetWidth() : 0; }
     unsigned GetHeight() const { return texture ? texture->GetHeight() : 0; }
-    double GetHorizontalResolution() const { return 96; }
-    double GetVerticalResolution() const { return 96; }
+    double GetHorizontalResolution() const { return dpiX; }
+    double GetVerticalResolution() const { return dpiY; }
     int GetType() const { return texture ? 1 : 0; }
     int GetPixelFormat() const { return 0x26200a; }
     int GetFlags() const { return texture ? 2 : 0; }
     int GetLastStatus() const { int result=status; status=0; return result; }
     tTJSVariant Clone() const {
-        return boxed(new Image(texture ? std::make_shared<tTVPBaseTexture>(*texture) : nullptr));
+        auto copy=new Image(*this); if(texture) copy->texture=std::make_shared<tTVPBaseTexture>(*texture);
+        return boxed(copy);
     }
     tTJSVariant GetBounds() const { return boxed(new Rect(0,0,GetWidth(),GetHeight())); }
     static std::shared_ptr<tTVPBaseTexture> read(const tTJSVariant &value) {
@@ -65,6 +77,7 @@ struct Image {
         operation.transform[0]=operation.transform[3]=1;
         operation.path=path; operation.path_count=5; operation.paints=&paint; operation.paint_count=1;
         if(krkr_layer_ex_draw(&operation)) { status=1; return 1; }
+        if(type%2) std::swap(dpiX,dpiY);
         texture=std::move(output); return 0;
     }
 };
