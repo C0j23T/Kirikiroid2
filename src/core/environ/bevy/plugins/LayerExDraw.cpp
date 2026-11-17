@@ -126,6 +126,23 @@ static tTJSVariant rect(double x,double y,double w,double h) {
     tTJSVariant out(obj,obj); obj->Release(); return out;
 }
 struct Layer {
+    static tjs_error TJS_INTF_METHOD clear(tTJSVariant *,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
+        if(count<1) return TJS_E_BADPARAMCOUNT;
+        tTJSNI_BaseLayer *layer=nullptr;
+        if(TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,(iTJSNativeInstance**)&layer))) return TJS_E_INVALIDPARAM;
+        layer->IndependMainImage(); auto image=layer->GetMainImage();
+        const tjs_uint32 color=tjs_uint32(p[0]->AsInteger());
+        TVPBevyRenderCommand c{}; c.operation=4; c.method="FillARGB";
+        c.target=TVPBevyTextureID(image->GetTexture());
+        c.rect[2]=image->GetWidth(); c.rect[3]=image->GetHeight();
+        c.parameters[12]=float((color>>16)&255)/255;
+        c.parameters[13]=float((color>>8)&255)/255;
+        c.parameters[14]=float(color&255)/255;
+        c.parameters[15]=float((color>>24)&255)/255;
+        if(krkr_render_dispatch(&c)) return TJS_E_FAIL;
+        TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true); layer->Update();
+        return TJS_S_OK;
+    }
     static tjs_error render(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj,bool draw,bool internal) {
         if(count<(draw ? 5 : 2)) return TJS_E_BADPARAMCOUNT;
         auto font=ncbInstanceAdaptor<Font>::GetNativeInstance(p[0]->AsObjectNoAddRef());
@@ -185,6 +202,7 @@ NCB_REGISTER_CLASS_DIFFER(GdiPlus,BevyGdiPlus) {
     Variant(TJS_W("FontStyleUnderline"),tTJSVariant(4)); Variant(TJS_W("FontStyleStrikeout"),tTJSVariant(8)); Variant(TJS_W("BrushTypeSolidColor"),tTJSVariant(0)); Variant(TJS_W("BrushTypeLinearGradient"),tTJSVariant(4));
 }
 NCB_ATTACH_CLASS(BevyDrawLayer,Layer) {
+    RawCallback("clear",BevyDraw::Layer::clear,0);
     RawCallback("drawString",BevyDraw::Layer::draw,0); RawCallback("drawPathString",BevyDraw::Layer::draw,0);
     RawCallback("measureString",BevyDraw::Layer::measure,0); RawCallback("measureStringInternal",BevyDraw::Layer::measureInternal,0);
 }
