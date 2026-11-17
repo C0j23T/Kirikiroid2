@@ -43,12 +43,12 @@ struct Font {
     double ascentLeading() const { return std::max(0.0, (spacing()-ascent()-descent())/2.0); }
     double descentLeading() const { return std::max(0.0, spacing()-ascent()-descent()-ascentLeading()); }
 };
-struct Paint { tjs_uint32 a,b; double x1=0,y1=0,x2=1,y2=0,width=0,ox=0,oy=0; int wrap=0; bool gradient=false; };
+struct Paint { tjs_uint32 a,b; double x1=0,y1=0,x2=1,y2=0,width=0,ox=0,oy=0; int wrap=0; bool gradient=false,pen=false; };
 struct Appearance {
     std::vector<Paint> paints;
     void clear() { paints.clear(); }
-    void add(tTJSVariant color,double width,double ox,double oy) {
-        Paint p{}; p.width=width; p.ox=ox; p.oy=oy;
+    void add(tTJSVariant color,double width,double ox,double oy,bool pen=false) {
+        Paint p{}; p.width=width; p.ox=ox; p.oy=oy; p.pen=pen;
         if(!std::isfinite(width) || width<0 || width>256 || !std::isfinite(ox) || !std::isfinite(oy)) TVPThrowExceptionMessage(TJS_W("Invalid appearance dimensions"));
         if(color.Type()!=tvtObject) p.a=p.b=tjs_uint32(color.AsInteger());
         else {
@@ -95,7 +95,7 @@ struct Appearance {
         auto app=ncbInstanceAdaptor<Appearance>::GetNativeInstance(obj);
         if(!app) return TJS_E_INVALIDPARAM;
         double width=p[1]->Type()==tvtObject ? number(*p[1],TJS_W("width"),1) : p[1]->AsReal();
-        app->add(*p[0],width,n>2 ? p[2]->AsReal() : 0,n>3 ? p[3]->AsReal() : 0); return TJS_S_OK;
+        app->add(*p[0],width,n>2 ? p[2]->AsReal() : 0,n>3 ? p[3]->AsReal() : 0,true); return TJS_S_OK;
     }
 };
 struct GdiPlus {
@@ -126,6 +126,53 @@ static tTJSVariant rect(double x,double y,double w,double h) {
     tTJSVariant out(obj,obj); obj->Release(); return out;
 }
 struct Layer {
+    static tjs_error fillRect(tTJSNI_BaseLayer *layer, long long left, long long top, long long right, long long bottom, tjs_uint32 color) {
+        auto image=layer->GetMainImage(); auto clip=layer->GetClip();
+        left=std::max({left,(long long)clip.left,0LL}); top=std::max({top,(long long)clip.top,0LL});
+        right=std::min({right,(long long)clip.right,(long long)image->GetWidth()});
+        bottom=std::min({bottom,(long long)clip.bottom,(long long)image->GetHeight()});
+        if(left>=right || top>=bottom) return TJS_S_OK;
+        TVPBevyRenderCommand c{}; c.operation=4; c.method="FillARGB";
+        c.target=TVPBevyTextureID(image->GetTexture());
+        c.rect[0]=(int)left; c.rect[1]=(int)top; c.rect[2]=(int)right; c.rect[3]=(int)bottom;
+        c.parameters[12]=float((color>>16)&255)/255;
+        c.parameters[13]=float((color>>8)&255)/255;
+        c.parameters[14]=float(color&255)/255;
+        c.parameters[15]=float((color>>24)&255)/255;
+        return krkr_render_dispatch(&c) ? TJS_E_FAIL : TJS_S_OK;
+    }
+    static tjs_error finish(tTJSNI_BaseLayer *layer) {
+        auto image=layer->GetMainImage();
+        TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true); layer->Update();
+        return TJS_S_OK;
+    }
+    static tjs_error get(tTJSNI_BaseLayer **layer, iTJSDispatch2 *obj) {
+        if(!obj || TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,
+                reinterpret_cast<iTJSNativeInstance **>(layer))) || !*layer || !(*layer)->GetMainImage())
+            return TJS_E_INVALIDPARAM;
+        return TJS_S_OK;
+    }
+    static bool integral(double value) { return std::isfinite(value) && std::floor(value)==value; }
+    static bool ellipseSpan(int x,int y,int width,int height,int row,int &left,int &right) {
+        const double rx=width/2.0, ry=height/2.0, cx=x+rx, cy=y+ry;
+        const double dy=(row+0.5-cy)/ry;
+        if(std::abs(dy)>1.0) return false;
+        const double half=rx*std::sqrt(std::max(0.0,1.0-dy*dy));
+        left=(int)std::ceil(cx-half-0.5); right=(int)std::floor(cx+half-0.5)+1;
+        return left<right;
+    }
+    static tjs_error ellipseFill(tTJSNI_BaseLayer *layer,int x,int y,int width,int height,tjs_uint32 color) {
+        auto clip=layer->GetClip();
+        int top=std::max({y,clip.top,0}), bottom=std::min({y+height,clip.bottom,(int)layer->GetMainImage()->GetHeight()});
+        for(int row=top;row<bottom;++row) {
+            int left,right;
+            if(ellipseSpan(x,y,width,height,row,left,right)) {
+                auto status=fillRect(layer,left,row,right,(long long)row+1,color);
+                if(status!=TJS_S_OK) return status;
+            }
+        }
+        return TJS_S_OK;
+    }
     static tjs_error TJS_INTF_METHOD clear(tTJSVariant *,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
         if(count<1) return TJS_E_BADPARAMCOUNT;
         tTJSNI_BaseLayer *layer=nullptr;
@@ -143,6 +190,38 @@ struct Layer {
         TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true); layer->Update();
         return TJS_S_OK;
     }
+    static tjs_error shape(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj,bool ellipse) {
+        if(count<5) return TJS_E_BADPARAMCOUNT;
+        tTJSNI_BaseLayer *layer=nullptr; auto status=get(&layer,obj); if(status!=TJS_S_OK) return status;
+        if(p[0]->Type()!=tvtObject) return TJS_E_INVALIDPARAM;
+        auto app=ncbInstanceAdaptor<Appearance>::GetNativeInstance(p[0]->AsObjectNoAddRef());
+        if(!app) return TJS_E_INVALIDPARAM;
+        double values[4];
+        for(int i=0;i<4;++i) values[i]=p[i+1]->AsReal();
+        for(double value:values) if(!integral(value) || std::abs(value)>1000000) return TJS_E_INVALIDPARAM;
+        int x=(int)values[0], y=(int)values[1], width=(int)values[2], height=(int)values[3];
+        if(width<=0 || height<=0) return TJS_E_INVALIDPARAM;
+        for(const auto &paint:app->paints) {
+            if(paint.pen || paint.gradient || (paint.a>>24)!=255 ||
+               !integral(paint.ox) || !integral(paint.oy) ||
+               std::abs(paint.ox)>1000000 || std::abs(paint.oy)>1000000)
+                TVPThrowExceptionMessage(TJS_W("Shape drawing requires opaque solid brushes and integer coordinates"));
+        }
+        if(app->paints.empty()) { if(result) *result=rect(0,0,0,0); return TJS_S_OK; }
+        int left=2000000,top=2000000,right=-2000000,bottom=-2000000;
+        layer->IndependMainImage();
+        for(const auto &paint:app->paints) {
+            int px=x+(int)paint.ox, py=y+(int)paint.oy;
+            left=std::min(left,px); top=std::min(top,py);
+            right=std::max(right,px+width); bottom=std::max(bottom,py+height);
+            status=ellipse ? ellipseFill(layer,px,py,width,height,paint.a) : fillRect(layer,px,py,px+width,py+height,paint.a);
+            if(status!=TJS_S_OK) return status;
+        }
+        if(result) *result=rect(left,top,right-left,bottom-top);
+        return finish(layer);
+    }
+    static tjs_error TJS_INTF_METHOD drawRectangle(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *o) { return shape(r,n,p,o,false); }
+    static tjs_error TJS_INTF_METHOD drawEllipse(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *o) { return shape(r,n,p,o,true); }
     static tjs_error render(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj,bool draw,bool internal) {
         if(count<(draw ? 5 : 2)) return TJS_E_BADPARAMCOUNT;
         auto font=ncbInstanceAdaptor<Font>::GetNativeInstance(p[0]->AsObjectNoAddRef());
@@ -203,6 +282,8 @@ NCB_REGISTER_CLASS_DIFFER(GdiPlus,BevyGdiPlus) {
 }
 NCB_ATTACH_CLASS(BevyDrawLayer,Layer) {
     RawCallback("clear",BevyDraw::Layer::clear,0);
+    RawCallback("drawRectangle",BevyDraw::Layer::drawRectangle,0);
+    RawCallback("drawEllipse",BevyDraw::Layer::drawEllipse,0);
     RawCallback("drawString",BevyDraw::Layer::draw,0); RawCallback("drawPathString",BevyDraw::Layer::draw,0);
     RawCallback("measureString",BevyDraw::Layer::measure,0); RawCallback("measureStringInternal",BevyDraw::Layer::measureInternal,0);
 }
