@@ -16,6 +16,31 @@ namespace
             throw std::runtime_error("Bevy texture operation failed");
     }
 
+    void CopyChannels(uint64_t target, uint64_t source,
+                      const std::array<unsigned, 4> &channels,
+                      const tTVPRect &rect, const tTVPRect &sourceRect)
+    {
+        for (auto channel : channels)
+            if (channel > 3)
+                throw std::invalid_argument("Invalid texture channel");
+        TVPBevyRenderCommand c{};
+        c.operation = 4;
+        c.method = "ChannelSwizzle";
+        c.target = target;
+        c.sources[0] = source;
+        c.rect[0] = rect.left;
+        c.rect[1] = rect.top;
+        c.rect[2] = rect.right;
+        c.rect[3] = rect.bottom;
+        c.source_rects[0][0] = sourceRect.left;
+        c.source_rects[0][1] = sourceRect.top;
+        c.source_rects[0][2] = sourceRect.right;
+        c.source_rects[0][3] = sourceRect.bottom;
+        for (size_t i = 0; i < channels.size(); ++i)
+            c.parameters[i] = channels[i];
+        Dispatch(c);
+    }
+
     class Texture final : public iTVPTexture2D
     {
         TVPTextureFormat::e Format;
@@ -49,13 +74,20 @@ namespace
         void Flush()
         {
             if(PluginWritable) {
-                Mapping.resize(PluginMapping.size()*4);
-                auto out=reinterpret_cast<uint32_t *>(Mapping.data());
-                for(size_t i=0;i<PluginMapping.size();++i) {
-                    auto p=PluginMapping[i];
-                    out[i]=(p&0xff00ff00)|((p&0xff)<<16)|((p>>16)&0xff);
-                }
-                Writable=true;
+                TVPBevyRenderCommand c{};
+                c.operation = 2;
+                c.target = ID;
+                c.format = TVPTextureFormat::RGBA;
+                c.rect[2] = Width;
+                c.rect[3] = Height;
+                c.data = PluginMapping.data();
+                c.pitch = Width * 4;
+                Dispatch(c);
+                tTVPRect rect(0, 0, Width, Height);
+                CopyChannels(ID, ID, {2, 1, 0, 3}, rect, rect);
+                Mapping.clear();
+                Writable = false;
+                return;
             }
             if (!Writable)
                 return;
@@ -113,12 +145,12 @@ namespace
         void *PluginBuffer(bool write) {
             Flush();
             if(PluginMapping.empty()) {
-                const auto *source=static_cast<const uint32_t *>(GetScanLineForRead(0));
+                Texture bgra(Width, Height, TVPTextureFormat::RGBA);
+                tTVPRect rect(0, 0, Width, Height);
+                CopyChannels(bgra.ID, ID, {2, 1, 0, 3}, rect, rect);
+                const auto *source=bgra.GetScanLineForRead(0);
                 PluginMapping.resize(size_t(Width)*Height);
-                for(size_t i=0;i<PluginMapping.size();++i) {
-                    auto p=source[i];
-                    PluginMapping[i]=(p&0xff00ff00)|((p&0xff)<<16)|((p>>16)&0xff);
-                }
+                std::memcpy(PluginMapping.data(), source, PluginMapping.size() * sizeof(uint32_t));
             }
             PluginWritable|=write;
             return PluginMapping.data();
@@ -385,6 +417,15 @@ void TVPBevyInvalidateTexture(iTVPTexture2D *texture)
 {
     if (texture)
         static_cast<Texture *>(texture)->Invalidate();
+}
+void TVPBevyCopyTextureChannels(iTVPTexture2D *target, iTVPTexture2D *source,
+                               const std::array<unsigned, 4> &channels,
+                               const tTVPRect &rect, const tTVPRect &sourceRect)
+{
+    const auto targetID = TVPBevyTextureID(target);
+    const auto sourceID = TVPBevyTextureID(source);
+    CopyChannels(targetID, sourceID, channels, rect, sourceRect);
+    TVPBevyInvalidateTexture(target);
 }
 void iTVPTexture2D::Release()
 {

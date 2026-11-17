@@ -1,5 +1,6 @@
 #pragma once
 #include "RenderManager.h"
+#include <array>
 
 struct TVPBevyRenderCommand
 {
@@ -21,3 +22,7 @@ uint64_t TVPBevyTextureID(iTVPTexture2D *texture);
 void TVPBevyInvalidateTexture(iTVPTexture2D *texture);
 
 void *TVPBevyPluginImageBuffer(iTVPTexture2D *texture, bool write);
+
+void TVPBevyCopyTextureChannels(iTVPTexture2D *target, iTVPTexture2D *source,
+                               const std::array<unsigned, 4> &channels,
+                               const tTVPRect &rect, const tTVPRect &sourceRect);

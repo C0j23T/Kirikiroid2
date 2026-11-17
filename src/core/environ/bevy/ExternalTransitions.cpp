@@ -1,7 +1,9 @@
 #include "ExternalTransitions.h"
 #include "TransIntf.h"
 #include "RenderManager.h"
+#include "BevyRender.h"
 #include <cstring>
+#include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -18,10 +20,13 @@ public:
     std::vector<tjs_uint32> pixels;
     Pixels(int w, int h, bool owned=false) : width(w), height(h), owned(owned), pixels(size_t(w)*h) {}
     void Capture(iTVPScanLineProvider *source) {
-        auto texture = source->GetTexture();
+        std::unique_ptr<iTVPTexture2D, void (*)(iTVPTexture2D *)> texture(
+            TVPGetRenderManager()->CreateTexture2D(nullptr, 0, width, height, TVPTextureFormat::RGBA),
+            [](iTVPTexture2D *value) { value->Release(); });
+        tTVPRect rect(0, 0, width, height);
+        TVPBevyCopyTextureChannels(texture.get(), source->GetTexture(), {2, 1, 0, 3}, rect, rect);
         for (int y=0; y<height; ++y)
             std::memcpy(pixels.data()+size_t(y)*width, texture->GetScanLineForRead(y), size_t(width)*4);
-        for(auto &pixel : pixels) pixel=(pixel&0xff00ff00)|((pixel&0xff)<<16)|((pixel>>16)&0xff);
     }
     tjs_error TJS_INTF_METHOD AddRef() override { ++refs; return TJS_S_OK; }
     tjs_error TJS_INTF_METHOD Release() override { if(!--refs && owned) delete this; return TJS_S_OK; }
@@ -63,11 +68,10 @@ class Handler final : public iTVPDivisibleTransHandler {
     int refs=1;
     KrkrzABI::Handler *external;
     Pixels source1, source2, output;
-    std::vector<tjs_uint32> rgba;
     bool captured=false;
 public:
     Handler(KrkrzABI::Handler *h, int w, int height)
-        : external(h), source1(w,height), source2(w,height), output(w,height), rgba(size_t(w)*height) { ++activeHandlers; handlers.insert(this); }
+        : external(h), source1(w,height), source2(w,height), output(w,height) { ++activeHandlers; handlers.insert(this); }
     ~Handler() { Detach(); handlers.erase(this); }
     void Detach() {
         if(!external) return;
@@ -95,19 +99,12 @@ public:
             const void *row=nullptr;
             if(TJS_FAILED(d.Dest->GetScanLine(d.DestTop,&row))) return TJS_E_FAIL;
             int pitch=0; d.Dest->GetPitchBytes(&pitch);
-            rgba.resize(size_t(data->Width)*data->Height);
-
-            // TODO: Move BGRA -> RGBA to GPU
-            for(int y=0; y<data->Height; ++y) {
-                const auto *source=reinterpret_cast<const tjs_uint32 *>(static_cast<const char *>(row)+y*pitch)+d.DestLeft;
-                for(int x=0; x<data->Width; ++x) {
-                    auto p=source[x];
-                    rgba[size_t(y)*data->Width+x]=(p&0xff00ff00)|((p&0xff)<<16)|((p>>16)&0xff);
-                }
-            }
-            data->Dest->GetTextureForRender()->Update(rgba.data(),
-                TVPTextureFormat::RGBA,data->Width*4,tTVPRect(data->DestLeft,data->DestTop,
-                data->DestLeft+data->Width,data->DestTop+data->Height));
+            auto texture = data->Dest->GetTextureForRender();
+            tTVPRect rect(data->DestLeft, data->DestTop,
+                          data->DestLeft + data->Width, data->DestTop + data->Height);
+            texture->Update(static_cast<const char *>(row) + d.DestLeft * 4,
+                            TVPTextureFormat::RGBA, pitch, rect);
+            TVPBevyCopyTextureChannels(texture, texture, {2, 1, 0, 3}, rect, rect);
         }
         return result;
     }
