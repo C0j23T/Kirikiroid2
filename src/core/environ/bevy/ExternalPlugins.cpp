@@ -3,16 +3,13 @@
 #include <dlfcn.h>
 
 #include <algorithm>
-#include <filesystem>
-#include "krkr_storage.h"
-#include <string>
+#include <memory>
 #include <set>
-#include <unordered_map>
 #include <vector>
 
 #include "PluginImpl.h"
 #include "ExternalTransitions.h"
-#include "ncbind/ncbind.hpp"
+#include "ScriptMgnIntf.h"
 #include "StorageImpl.h"
 #include "SysInitImpl.h"
 
@@ -24,82 +21,78 @@ using Link = int32_t (*)(iTVPFunctionExporter *);
 using Unlink = int32_t (*)();
 
 struct LoadedPlugin {
+    ttstr name;
     void *handle;
     Unlink unlink;
+    std::unique_ptr<tTVPPluginHolder> holder;
 };
 
-std::unordered_map<std::string, LoadedPlugin> loaded;
+std::vector<LoadedPlugin> loaded;
 
-std::string keyFor(const ttstr &name) {
-    return TVPExtractStorageName(name).AsLowerCase().AsNarrowStdString();
+std::vector<LoadedPlugin>::iterator findPlugin(const ttstr &name) {
+    return std::find_if(loaded.begin(), loaded.end(), [&name](const auto &plugin) {
+        return plugin.name == name;
+    });
 }
 
-std::vector<std::filesystem::path> candidates(const ttstr &name) {
-    const std::filesystem::path project(TVPNativeProjectDir.AsNarrowStdString());
-    const std::string requested = name.AsNarrowStdString();
-    const std::filesystem::path given(requested);
-    std::vector<std::filesystem::path> result;
-    auto add = [&result](const std::filesystem::path &path) {
-        if (!path.empty() && std::find(result.begin(), result.end(), path) == result.end())
-            result.push_back(path);
-    };
-    add(given);
-    add(project / given);
-    add(project / "plugin" / given);
-
-    std::filesystem::path stem = given;
-    if (stem.extension() == ".dll" || stem.extension() == ".DLL")
-        stem.replace_extension(".so");
-    if (stem.extension() != ".so") stem += ".so";
-    add(stem);
-    add(project / stem);
-    add(project / "plugin" / stem);
-    if (stem.filename().string().rfind("lib", 0) != 0)
-        add(project / ("lib" + stem.filename().string()));
-    return result;
+ttstr resolveName(const ttstr &name) {
+    std::basic_string<tjs_char> soname = name.c_str();
+    const bool dll = soname.size() >= 4 && soname.substr(soname.size() - 4) == TJS_W(".dll");
+#if defined(_WIN32)
+    if (dll) return name;
+#elif defined(__APPLE__)
+    if (dll) soname.replace(soname.size() - 3, 3, TJS_W("dylib"));
+#else
+    if (dll) soname.replace(soname.size() - 3, 3, TJS_W("so"));
+#endif
+    if (soname.substr(0, 3) != TJS_W("lib")) soname.insert(0, TJS_W("lib"));
+    return ttstr(soname.c_str());
 }
 
 } // namespace
 
 bool TVPBevyLoadExternalPlugin(const ttstr &name) {
-    const std::string key = keyFor(name);
-    if (key.empty() || loaded.find(key) != loaded.end()) return true;
+    if (findPlugin(name) != loaded.end()) return true;
 
-    for (const auto &path : candidates(name)) {
-        KrkrFsMetadata meta;
-        if (krkr_fs_metadata(path.string().c_str(), &meta) != 0 || meta.kind != 1) continue;
-        void *handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
-        if (!handle) continue;
-        auto link = reinterpret_cast<Link>(dlsym(handle, "V2Link"));
-        auto unlink = reinterpret_cast<Unlink>(dlsym(handle, "V2Unlink"));
-        if (!link || link(TVPGetFunctionExporter()) != 0) {
-            dlclose(handle);
-            continue;
-        }
-        loaded.emplace(key, LoadedPlugin{handle, unlink});
-        TVPRegisteredPlugins.insert(ttstr(key.c_str()));
-        return true;
+    std::unique_ptr<tTVPPluginHolder> holder;
+    ttstr local = resolveName(name);
+#if !defined(ANDROID) && !defined(__ANDROID__)
+    holder = std::make_unique<tTVPPluginHolder>(local);
+    local = holder->GetLocalName();
+    if (local.IsEmpty() || !TVPCheckExistentLocalFile(local)) return false;
+#endif
+    void *handle = dlopen(local.AsNarrowStdString().c_str(), RTLD_NOW | RTLD_LOCAL);
+    if (!handle) return false;
+    auto link = reinterpret_cast<Link>(dlsym(handle, "V2Link"));
+    auto unlink = reinterpret_cast<Unlink>(dlsym(handle, "V2Unlink"));
+    try {
+        if (link) link(TVPGetFunctionExporter());
+        loaded.push_back({name, handle, unlink, std::move(holder)});
+        TVPRegisteredPlugins.insert(name);
+    } catch (...) {
+        dlclose(handle);
+        throw;
     }
-    return false;
+    return true;
 }
 
 bool TVPBevyUnloadExternalPlugin(const ttstr &name) {
-    const std::string key = keyFor(name);
-    auto it = loaded.find(key);
+    auto it = findPlugin(name);
     if (it == loaded.end()) return false;
     if (TVPBevyExternalTransitionsActive()) return false;
-    if (it->second.unlink && it->second.unlink() != 0) return false;
-    dlclose(it->second.handle);
+    if (auto engine = TVPGetScriptEngine()) engine->DoGarbageCollection();
+    if (it->unlink && TJS_FAILED(it->unlink())) return false;
+    dlclose(it->handle);
+    TVPRegisteredPlugins.erase(it->name);
     loaded.erase(it);
-    TVPRegisteredPlugins.erase(ttstr(key.c_str()));
     return true;
 }
 
 void TVPBevyUnloadExternalPlugins() {
     TVPBevyStopExternalTransitions();
-    std::vector<std::string> keys;
-    for (const auto &entry : loaded) keys.push_back(entry.first);
-    for (const auto &key : keys) TVPBevyUnloadExternalPlugin(ttstr(key.c_str()));
+    std::vector<ttstr> names;
+    for (auto it = loaded.rbegin(); it != loaded.rend(); ++it) names.push_back(it->name);
+    for (const auto &name : names) TVPBevyUnloadExternalPlugin(name);
 }
 
-bool TVPBevyIsExternalPlugin(const ttstr &name) { return loaded.find(keyFor(name)) != loaded.end(); }
+bool TVPBevyIsExternalPlugin(const ttstr &name) { return findPlugin(name) != loaded.end(); }

@@ -2,6 +2,8 @@
 #include "StorageIntf.h"
 #include "PluginImpl.h"
 #include "EventIntf.h"
+#include "TextStream.h"
+#include "CharacterSet.h"
 #include <memory>
 #include <unordered_map>
 
@@ -91,6 +93,10 @@ void TVPBevyExportStorageFunctions() {
     EXPORT("void ::TVPUnregisterStorageMedia(iTVPStorageMedia *)",UnregisterMedia);
     EXPORT("void ::TVPAddCompactEventHook(tTVPCompactEventCallbackIntf *)",TVPAddCompactEventHook);
     EXPORT("void ::TVPRemoveCompactEventHook(tTVPCompactEventCallbackIntf *)",TVPRemoveCompactEventHook);
+    EXPORT("tjs_int ::TVPWideCharToUtf8String(const tjs_char *,char *)",TVPWideCharToUtf8String);
+    EXPORT("tjs_int ::TVPUtf8ToWideCharString(const char *,tjs_char *)",static_cast<tjs_int (*)(const char *,tjs_char *)>(TVPUtf8ToWideCharString));
+    EXPORT("iTJSTextReadStream * ::TVPCreateTextStreamForRead(const ttstr &,const ttstr &)",TVPCreateTextStreamForRead);
+    EXPORT("iTJSTextWriteStream * ::TVPCreateTextStreamForWrite(const ttstr &,const ttstr &)",TVPCreateTextStreamForWrite);
     EXPORT("ttstr ::TVPGetPlacedPath(const ttstr &)",TVPGetPlacedPath);
     EXPORT("ttstr ::TVPGetLocallyAccessibleName(const ttstr &)",TVPGetLocallyAccessibleName);
     EXPORT("bool ::TVPIsExistentStorageNoSearch(const ttstr &)",TVPIsExistentStorageNoSearch);

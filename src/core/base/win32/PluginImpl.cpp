@@ -166,6 +166,10 @@ static void *TVPBevyLookupFunction(const std::string &name)
     if(name == "tjs_char * ::TJS_strchr(const tjs_char *,tjs_char)") return reinterpret_cast<void *>(TJS_strchr);
     if(name == "tjs_int ::TJS_strncmp(const tjs_char *,const tjs_char *,size_t)") return reinterpret_cast<void *>(TJS_strncmp);
     if(name == "iTJSDispatch2 * ::TVPGetScriptDispatch()") return reinterpret_cast<void *>(TVPGetScriptDispatch);
+    if(name == "void ::TVPExecuteExpression(const ttstr &,tTJSVariant *)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const ttstr &,tTJSVariant *)>(TVPExecuteExpression));
+    if(name == "void ::TVPExecuteExpression(const ttstr &,iTJSDispatch2 *,tTJSVariant *)")
+        return reinterpret_cast<void *>(static_cast<void (*)(const ttstr &,iTJSDispatch2 *,tTJSVariant *)>(TVPExecuteExpression));
     if(name == "void ::TVPAddLog(const ttstr &)") return reinterpret_cast<void *>(TVPAddLog);
     if(name == "tTJSVariantType tTJSVariant::Type()") return reinterpret_cast<void *>(TVPBevyVariantType);
     if(name == "tTJSVariant::tTJSVariant()") return reinterpret_cast<void *>(TVPBevyVariantConstruct);
@@ -580,63 +584,26 @@ void TVPLoadPlugin(const ttstr & name)
 		TJS_W("slideopen.dll"),
 	};
 
-	if(ignoredPlugins.find(TVPExtractStorageName(name).AsLowerCase()) != ignoredPlugins.end()) return;
-	if (TVPLoadInternalPlugin(name)) return;
-	if (!TVPBevyLoadExternalPlugin(name)) TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
-#if 0
-	// load plugin
-	if(TVPPluginLoading)
-		TVPThrowExceptionMessage(TVPCannnotLinkPluginWhilePluginLinking);
-			// linking plugin while other plugin is linking, is prohibited
-			// by data security reason.
-
-	// check whether the same plugin was already loaded
-	tTVPPluginVectorType::iterator i;
-	for(i = TVPPluginVector.Vector.begin();
-		i != TVPPluginVector.Vector.end(); i++)
-	{
-		if((*i)->Name == name) return;
-	}
-
-	tTVPPlugin * p;
-
-	try
-	{
-		TVPPluginLoading = true;
-		p = new tTVPPlugin(name, &TVPPluginVector.StorageProvider);
-		TVPPluginLoading = false;
-	}
-	catch(...)
-	{
-		TVPPluginLoading = false;
-		throw;
-	}
-
-	TVPPluginVector.Vector.push_back(p);
-#endif
+    if(ignoredPlugins.find(TVPExtractStorageName(name).AsLowerCase()) != ignoredPlugins.end()) return;
+    if(TVPPluginLoading)
+        TVPThrowExceptionMessage(TVPCannnotLinkPluginWhilePluginLinking);
+    if(TVPLoadInternalPlugin(name)) return;
+    TVPPluginLoading = true;
+    try {
+        if(!TVPBevyLoadExternalPlugin(name)) TVPThrowExceptionMessage(TVPCannotLoadPlugin, name);
+        TVPPluginLoading = false;
+    } catch(...) {
+        TVPPluginLoading = false;
+        throw;
+    }
 }
 //---------------------------------------------------------------------------
 bool TVPUnloadPlugin(const ttstr & name)
 {
-	if (TVPBevyIsExternalPlugin(name)) return TVPBevyUnloadExternalPlugin(name);
-	// unload plugin
-#if 0
-	tTVPPluginVectorType::iterator i;
-	for(i = TVPPluginVector.Vector.begin();
-		i != TVPPluginVector.Vector.end(); i++)
-	{
-		if((*i)->Name == name)
-		{
-			if(!(*i)->Uninit()) return false;
-			delete *i;
-			TVPPluginVector.Vector.erase(i);
-			return true;
-		}
-	}
-	TVPThrowExceptionMessage(TVPNotLoadedPlugin, name);
-	return false;
-#endif
-	return true;
+    if(TVPBevyIsExternalPlugin(name)) return TVPBevyUnloadExternalPlugin(name);
+    if(TVPRegisteredPlugins.count(TVPExtractStorageName(name).AsLowerCase())) return true;
+    TVPThrowExceptionMessage(TVPNotLoadedPlugin, name);
+    return false;
 }
 //---------------------------------------------------------------------------
 

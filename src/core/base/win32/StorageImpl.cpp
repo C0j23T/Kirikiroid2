@@ -1088,47 +1088,24 @@ tTJSBinaryStream * TVPCreateBinaryStreamAdapter(IStream *refstream)
 // tTVPPluginHolder
 //---------------------------------------------------------------------------
 tTVPPluginHolder::tTVPPluginHolder(const ttstr &aname)
+    : LocalTempStorageHolder(nullptr)
 {
-	LocalTempStorageHolder = NULL;
+    ttstr place(TVPGetPlacedPath(aname));
+    if(!place.IsEmpty()) {
+        LocalTempStorageHolder = new tTVPLocalTempStorageHolder(place);
+        return;
+    }
 
-	// search in TVP storage system
-	ttstr place(TVPGetPlacedPath(aname));
-	if(!place.IsEmpty())
-	{
-		LocalTempStorageHolder = new tTVPLocalTempStorageHolder(place);
-	}
-	else
-	{
-		// not found in TVP storage system; search exepath, exepath\system, exepath\plugin
-#if 0
-		ttstr exepath =
-			IncludeTrailingBackslash(ExtractFileDir(ExePath()));
-		ttstr pname = exepath + aname;
-		if(TVPCheckExistentLocalFile(pname))
-		{
-			LocalName = pname;
-			return;
-		}
-
-		pname = exepath + TJS_W("system\\") + aname;
-		if(TVPCheckExistentLocalFile(pname))
-		{
-			LocalName = pname;
-			return;
-		}
-
-#ifdef TJS_64BIT_OS
-		pname = exepath + TJS_W("plugin64\\") + aname;
-#else
-		pname = exepath + TJS_W("plugin\\") + aname;
-#endif
-		if(TVPCheckExistentLocalFile(pname))
-		{
-			LocalName = pname;
-			return;
-		}
-#endif
-	}
+    ttstr basepath = ExePath();
+    if(!basepath.IsEmpty() && basepath[basepath.GetLen() - 1] != TJS_W('/'))
+        basepath += TJS_W("/");
+    ttstr pname = basepath + aname;
+    if(TVPCheckExistentLocalFile(pname)) {
+        LocalName = pname;
+        return;
+    }
+    pname = basepath + TJS_W("plugin/") + aname;
+    if(TVPCheckExistentLocalFile(pname)) LocalName = pname;
 }
 //---------------------------------------------------------------------------
 tTVPPluginHolder::~tTVPPluginHolder()
