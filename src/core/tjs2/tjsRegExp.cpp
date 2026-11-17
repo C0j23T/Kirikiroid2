@@ -258,6 +258,8 @@ TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/_compile)
 
 	ttstr expr = *param[0];
 
+	expr.Replace(TJS_W("\\x0100-\\xFFFF"), TJS_W("\\w"));
+
 	const tjs_char *p = expr.c_str();
 	if(!p || !p[0]) return TJS_E_FAIL;
 
