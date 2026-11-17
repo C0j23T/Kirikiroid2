@@ -317,104 +317,80 @@ void TJS_debug_out(const tjs_char *format, ...)
 //---------------------------------------------------------------------------
 #define TJS_MB_MAX_CHARLEN 2
 //---------------------------------------------------------------------------
-size_t TJS_mbstowcs(tjs_char *pwcs, const tjs_nchar *s, size_t n)
+static int TJSDecodeUtf8(const unsigned char *input, size_t available, tjs_uint32 &code)
 {
-#if 0
-    if(pwcs && n == 0) return 0;
+    if (!available) return -1;
+    unsigned char first = input[0];
+    int count = first < 0x80 ? 1 : first >= 0xc2 && first < 0xe0 ? 2 :
+                first < 0xf0 && first >= 0xe0 ? 3 : first >= 0xf0 && first <= 0xf4 ? 4 : 0;
+    if (!count || available < static_cast<size_t>(count)) return -1;
+    code = first & (count == 1 ? 0x7f : (1u << (7 - count)) - 1);
+    for (int i = 1; i < count; ++i) {
+        if ((input[i] & 0xc0) != 0x80) return -1;
+        code = (code << 6) | (input[i] & 0x3f);
+    }
+    if ((count == 2 && code < 0x80) || (count == 3 && code < 0x800) ||
+        (count == 4 && code < 0x10000) || code > 0x10ffff ||
+        (code >= 0xd800 && code <= 0xdfff)) return -1;
+    return count;
+}
 
-	if(pwcs)
-	{
-		size_t count = SJISToUnicodeString( s, pwcs, n );
-		if( n > count )
-		{
-			pwcs[count] = TJS_W('\0');
-		}
-		return count;
-	}
-	else
-	{	// count length
-		return SJISToUnicodeString( s, NULL );
-	}
-#endif
-	if (!s) return -1;
-	if (pwcs && n == 0) return 0;
-
-	tjs_char wc;
-    size_t count = 0;
-    int cl;
-	if (!pwcs) {
-        n = strlen(s);
-		while (*s) {
-            cl = utf8_mbtowc(&wc, (const unsigned char*)s, n);
-			if (cl <= 0)
-                break;
-            s += cl;
-            n -= cl;
-            ++count;
+size_t TJS_mbstowcs(tjs_char *output, const tjs_nchar *input, size_t capacity)
+{
+    if (!input) return static_cast<size_t>(-1);
+    if (output && !capacity) return 0;
+    size_t remaining = strlen(input), count = 0;
+    while (remaining) {
+        if (output && count == capacity) break;
+        tjs_uint32 code;
+        int bytes = TJSDecodeUtf8(reinterpret_cast<const unsigned char *>(input), remaining, code);
+        if (bytes < 0) return static_cast<size_t>(-1);
+        size_t units = code > 0xffff ? 2 : 1;
+        if (output && units > capacity - count) break;
+        if (output) {
+            if (units == 2) {
+                code -= 0x10000;
+                output[count] = static_cast<tjs_char>(0xd800 + (code >> 10));
+                output[count + 1] = static_cast<tjs_char>(0xdc00 + (code & 0x3ff));
+            } else output[count] = static_cast<tjs_char>(code);
         }
-    } else {
-        tjs_char *pwcsend = pwcs + n;
-        n = strlen(s);
-		while (*s && pwcs < pwcsend) {
-            cl = utf8_mbtowc(&wc, (const unsigned char*)s, n);
-			if (cl <= 0)
-                return -1;
-            s += cl;
-            n -= cl;
-            *pwcs++ = wc;
-            ++count;
-        }
+        count += units;
+        input += bytes;
+        remaining -= bytes;
     }
     return count;
 }
-//---------------------------------------------------------------------------
-size_t TJS_wcstombs(tjs_nchar *s, const tjs_char *pwcs, size_t n)
+
+size_t TJS_wcstombs(tjs_nchar *output, const tjs_char *input, size_t capacity)
 {
-#if 0
-    if(s && !n) return 0;
-
-	if(s)
-	{
-		tjs_size count = UnicodeToSJISString( pwcs, s, n );
-		if( n > count )
-		{
-			s[count] = '\0';
-		}
-		return count;
-	}
-	else
-	{
-		// Returns the buffer size to store the result
-		return UnicodeToSJISString(pwcs,NULL);
-	}
-#endif
-	if (!pwcs) return -1;
-	if (s && !n) return 0;
-
-    int cl;
-	if (!s) {
-        unsigned char tmp[6];
-        size_t count = 0;
-		while (*pwcs) {
-            cl = utf8_wctomb(tmp, *pwcs, 6);
-			if (cl <= 0)
-                return -1;
-			pwcs++;
-            count += cl;
+    if (!input) return static_cast<size_t>(-1);
+    if (output && !capacity) return 0;
+    size_t count = 0;
+    while (*input) {
+        if (output && count == capacity) break;
+        tjs_uint32 code = *input++;
+        if (code >= 0xd800 && code <= 0xdbff) {
+            tjs_uint32 low = *input;
+            if (low < 0xdc00 || low > 0xdfff) return static_cast<size_t>(-1);
+            ++input;
+            code = 0x10000 + ((code - 0xd800) << 10) + low - 0xdc00;
+        } else if (code >= 0xdc00 && code <= 0xdfff) return static_cast<size_t>(-1);
+        int bytes = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+        if (output && static_cast<size_t>(bytes) > capacity - count) return static_cast<size_t>(-1);
+        if (output) {
+            if (bytes == 1) output[count] = static_cast<char>(code);
+            else {
+                static const unsigned char prefixes[] = {0, 0, 0xc0, 0xe0, 0xf0};
+                for (int i = bytes - 1; i > 0; --i) {
+                    output[count + i] = static_cast<char>(0x80 | (code & 0x3f));
+                    code >>= 6;
+                }
+                output[count] = static_cast<char>(prefixes[bytes] | code);
+            }
         }
-        return count;
-    } else {
-        tjs_nchar *d = s;
-		while (*pwcs && n > 0) {
-            cl = utf8_wctomb((unsigned char*)d, *pwcs, n);
-			if (cl <= 0)
-                return -1;
-            n -= cl;
-            d += cl;
-			pwcs++;
-        }
-        return d - s;
+        count += bytes;
     }
+    return count;
 }
 //---------------------------------------------------------------------------
 // Žg‚í‚ê‚Ä‚¢‚È‚¢‚æ‚¤‚È‚Ì‚Å–¢Šm”F’ˆÓ
