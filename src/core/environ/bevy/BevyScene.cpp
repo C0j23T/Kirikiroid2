@@ -24,6 +24,27 @@ struct TVPBevyScene
     int Height = 0;
     std::unordered_set<tTJSNI_BaseLayer *> Painting;
 
+    static void CopyRegion(tTVPBaseTexture &target, tTVPBaseTexture &source,
+                           const tTVPRect &rect)
+    {
+        TVPBevyRenderCommand command{};
+        command.operation = 7;
+        command.target =
+            TVPBevyTextureID(target.GetTextureForRender(true, nullptr));
+        command.sources[0] = TVPBevyTextureID(source.GetTexture());
+        command.rect[0] = rect.left;
+        command.rect[1] = rect.top;
+        command.rect[2] = rect.right;
+        command.rect[3] = rect.bottom;
+        command.source_rects[0][0] = rect.left;
+        command.source_rects[0][1] = rect.top;
+        command.source_rects[0][2] = rect.right;
+        command.source_rects[0][3] = rect.bottom;
+        if (krkr_render_dispatch(&command))
+            throw std::runtime_error("Bevy scene texture copy failed");
+        TVPBevyInvalidateTexture(target.GetTexture());
+    }
+
     static void Composite(tTVPBaseTexture &target, tTVPBaseTexture &source, int x,
                           int y, int type, int opacity)
     {
@@ -233,22 +254,48 @@ uint64_t TVPBevyBuildScene(void *screen, int *width, int *height)
     const bool key_changed = Scene.Screen != scene_screen || Scene.Layer != layer ||
                              Scene.Width != layer_width || Scene.Height != layer_height;
     TVPBevyScene::Prepare(*layer);
-    const bool layer_dirty = manager && manager->GetUpdateRegionForCompletion().GetCount();
+    auto *update_region = manager ? &manager->GetUpdateRegionForCompletion() : nullptr;
+    const bool layer_dirty = update_region && update_region->GetCount();
     const bool scene_dirty = SceneDirty.exchange(false);
     const bool transition_active = TVPBevyScene::HasActiveTransition(*layer);
-    if (!Scene.Target || key_changed || !manager || layer_dirty || scene_dirty ||
-        transition_active)
+    const bool target_changed = !Scene.Target || key_changed ||
+                                Scene.Width != layer_width ||
+                                Scene.Height != layer_height;
+    if (target_changed)
     {
-        if (manager)
-            manager->GetUpdateRegionForCompletion().Clear();
+        Scene.Target =
+            std::make_unique<tTVPBaseTexture>(layer_width, layer_height);
+        Scene.Screen = scene_screen;
+        Scene.Layer = layer;
+        Scene.Width = layer_width;
+        Scene.Height = layer_height;
+    }
+
+    bool full_dirty = target_changed || !manager || scene_dirty || transition_active;
+    tTVPRect dirty_rect(0, 0, layer_width, layer_height);
+    if (layer_dirty)
+    {
+        const auto &bound = update_region->GetBound();
+        dirty_rect.left = std::max(0, bound.left);
+        dirty_rect.top = std::max(0, bound.top);
+        dirty_rect.right = std::min(layer_width, bound.right);
+        dirty_rect.bottom = std::min(layer_height, bound.bottom);
+        if (dirty_rect.left >= dirty_rect.right ||
+            dirty_rect.top >= dirty_rect.bottom)
+            full_dirty = true;
+    }
+
+    if (full_dirty || layer_dirty)
+    {
+        if (update_region)
+            update_region->Clear();
         SceneBuilding.store(true);
         try
         {
-            Scene.Target = Scene.Build(*layer);
-            Scene.Screen = scene_screen;
-            Scene.Layer = layer;
-            Scene.Width = layer_width;
-            Scene.Height = layer_height;
+            auto result = Scene.Build(*layer);
+            if (full_dirty)
+                dirty_rect = tTVPRect(0, 0, layer_width, layer_height);
+            TVPBevyScene::CopyRegion(*Scene.Target, *result, dirty_rect);
             SceneBuilding.store(false);
         }
         catch (...)
