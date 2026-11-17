@@ -9,6 +9,7 @@
 
 #include "PluginImpl.h"
 #include "ExternalTransitions.h"
+#include "ExternalGPU.h"
 #include "ScriptMgnIntf.h"
 #include "StorageImpl.h"
 #include "SysInitImpl.h"
@@ -66,10 +67,14 @@ bool TVPBevyLoadExternalPlugin(const ttstr &name) {
     auto link = reinterpret_cast<Link>(dlsym(handle, "V2Link"));
     auto unlink = reinterpret_cast<Unlink>(dlsym(handle, "V2Unlink"));
     try {
+        TVPBevyBeginGPUPlugin(name);
         if (link) link(TVPGetFunctionExporter());
+        TVPBevyEndGPUPlugin();
         loaded.push_back({name, handle, unlink, std::move(holder)});
         TVPRegisteredPlugins.insert(name);
     } catch (...) {
+        TVPBevyEndGPUPlugin();
+        TVPBevyReleaseGPUPlugin(name);
         dlclose(handle);
         throw;
     }
@@ -82,6 +87,7 @@ bool TVPBevyUnloadExternalPlugin(const ttstr &name) {
     if (TVPBevyExternalTransitionsActive()) return false;
     if (auto engine = TVPGetScriptEngine()) engine->DoGarbageCollection();
     if (it->unlink && TJS_FAILED(it->unlink())) return false;
+    TVPBevyReleaseGPUPlugin(name);
     dlclose(it->handle);
     TVPRegisteredPlugins.erase(it->name);
     loaded.erase(it);

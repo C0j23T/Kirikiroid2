@@ -249,9 +249,10 @@ static tTVPBevyFunctionExporter TVPBevyExternalFunctionExporter;
 
 extern void TVPBevyExportTJSFunctions();
 extern void TVPBevyExportStorageFunctions();
+extern void TVPBevyExportGPUFunctions();
 extern "C" iTVPFunctionExporter * TVPGetFunctionExporter()
 {
-    static bool initialized = [] { TVPBevyExportTJSFunctions(); TVPBevyExportStorageFunctions(); return true; }();
+    static bool initialized = [] { TVPBevyExportTJSFunctions(); TVPBevyExportStorageFunctions(); TVPBevyExportGPUFunctions(); return true; }();
 	return &TVPBevyExternalFunctionExporter;
 }
 
