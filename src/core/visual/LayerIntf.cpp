@@ -48,6 +48,7 @@
 extern void TVPSetFontRasterizer( tjs_int index );
 extern tjs_int TVPGetFontRasterizer();
 extern FontRasterizer* GetCurrentRasterizer();
+extern void TVPInializeFontRasterizers();
 extern void TVPMapPrerenderedFont(const tTVPFont & font, const ttstr & storage);
 extern void TVPUnmapPrerenderedFont(const tTVPFont & font);
 extern tjs_int TVPGetCursor(const ttstr & name);
@@ -9058,6 +9059,7 @@ tjs_error TJS_INTF_METHOD tTJSNI_Font::Construct(tjs_int numparams,
 	else
 	{
 		Layer = NULL;
+		TVPInializeFontRasterizers();
 		Font = TVPFontSystem->GetDefaultFont();
 	}
 
