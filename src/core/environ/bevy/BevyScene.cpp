@@ -82,19 +82,28 @@ struct TVPBevyScene
             tTJSNI_BaseLayer *Layer;
             ~Scope() { Set.erase(Layer); }
         } scope{Painting, &layer};
+        bool active =
+            transition && layer.InTransition && layer.DivisibleTransHandler;
+        const bool fullMainImage = layer.MainImage &&
+                                   layer.DisplayType != ltBinder &&
+                                   layer.MainImage->Is32BPP() &&
+                                   layer.ImageLeft == 0 && layer.ImageTop == 0 &&
+                                   layer.MainImage->GetWidth() == layer.GetWidth() &&
+                                   layer.MainImage->GetHeight() == layer.GetHeight();
+        if (!active && children && layer.GetCount() == 0 && fullMainImage)
+            return std::make_unique<tTVPBaseTexture>(*layer.MainImage);
         auto result =
             std::make_unique<tTVPBaseTexture>(layer.GetWidth(), layer.GetHeight());
         tTVPRect rect(0, 0, layer.GetWidth(), layer.GetHeight());
-        result->Fill(rect, layer.DisplayType == ltOpaque
-                               ? layer.NeutralColor | 0xff000000
-                               : 0);
+        if (!fullMainImage)
+            result->Fill(rect, layer.DisplayType == ltOpaque
+                                   ? layer.NeutralColor | 0xff000000
+                                   : 0);
         if (layer.MainImage && layer.DisplayType != ltBinder)
             result->CopyRect(layer.ImageLeft, layer.ImageTop, layer.MainImage,
                              tTVPRect(0, 0, layer.MainImage->GetWidth(),
                                       layer.MainImage->GetHeight()));
 
-        bool active =
-            transition && layer.InTransition && layer.DivisibleTransHandler;
         if (active)
         {
             if (layer.TransSelfUpdate)
@@ -104,9 +113,10 @@ struct TVPBevyScene
             {
                 layer.StopTransitionByHandler();
                 active = false;
-                result->Fill(rect, layer.DisplayType == ltOpaque
-                                       ? layer.NeutralColor | 0xff000000
-                                       : 0);
+                if (!fullMainImage)
+                    result->Fill(rect, layer.DisplayType == ltOpaque
+                                           ? layer.NeutralColor | 0xff000000
+                                           : 0);
                 if (layer.MainImage)
                     result->CopyRect(layer.ImageLeft, layer.ImageTop, layer.MainImage,
                                      tTVPRect(0, 0, layer.MainImage->GetWidth(),
