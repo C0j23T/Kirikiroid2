@@ -3,14 +3,17 @@
 #include "ncbind/ncbind.hpp"
 #include "LayerIntf.h"
 #include "LayerBitmapIntf.h"
-#include <cstdlib>
+#include "BevyRender.h"
+#include <array>
+#include <vector>
+#include <memory>
 
 namespace {
 struct LayerPixels {
     tTJSNI_BaseLayer *layer;
     tTVPBaseTexture *image;
     int width, height, pitch;
-    unsigned char *buffer;
+    std::shared_ptr<iTVPTexture2D> texture;
 };
 
 tTJSNI_BaseLayer *LayerObject(iTJSDispatch2 *object) {
@@ -29,33 +32,33 @@ bool ReadPixels(iTJSDispatch2 *object, LayerPixels &pixels) {
     int pitch = image->GetPitchBytes();
     if (width <= 0 || height <= 0 || pitch == 0) return false;
     pixels = {layer, image, width, height, pitch,
-              const_cast<unsigned char *>(static_cast<const unsigned char *>(image->GetScanLine(0)))};
+              std::shared_ptr<iTVPTexture2D>(image->GetTexture(), [](iTVPTexture2D *texture) { texture->Release(); })};
+    pixels.texture->AddRef();
     return true;
 }
 
 bool WritePixels(iTJSDispatch2 *object, LayerPixels &pixels) {
     auto layer = LayerObject(object);
     if (!layer || !layer->GetMainImage()) return false;
+    layer->IndependMainImage();
     auto image = layer->GetMainImage();
     int width = static_cast<int>(image->GetWidth()), height = static_cast<int>(image->GetHeight());
     int pitch = image->GetPitchBytes();
     if (width <= 0 || height <= 0 || pitch == 0) return false;
     pixels = {layer, image, width, height, pitch,
-              static_cast<unsigned char *>(image->GetScanLineForWrite(0))};
+              std::shared_ptr<iTVPTexture2D>(image->GetTexture(), [](iTVPTexture2D *texture) { texture->Release(); })};
+    pixels.texture->AddRef();
     return true;
 }
 
 void Commit(const LayerPixels &pixels) {
-    pixels.image->Update(pixels.buffer, pixels.pitch, 0, 0, pixels.width, pixels.height);
+    TVPBevyInvalidateTexture(pixels.image->GetTexture());
     pixels.layer->SetImageModified(true);
     pixels.layer->Update();
 }
 
 struct ShrinkCopy {
     using real = tTVReal;
-    using PixelT = unsigned int;
-    using BufRefT = const unsigned char *;
-    using WrtRefT = unsigned char *;
 
     static tjs_error TJS_INTF_METHOD copy(tTJSVariant *, tjs_int count, tTJSVariant **params,
                                           iTJSDispatch2 *dstObject) {
@@ -136,48 +139,33 @@ struct ShrinkCopy {
         int offset, step;
         AvgT ta, tc, ba, bc, total;
     };
-    struct ElementT {
-        AvgT r, g, b, a;
-    };
 
     void copyPixels() {
-        AvgInfoT *horz = nullptr, *vert = nullptr;
-        void *buf = allocAvgBuffer(horz, vert, dex - dsx, dey - dsy);
-        if (!buf) return;
-        AvgT hu = makeAvgTable(horz, true);
-        AvgT vu = makeAvgTable(vert, false);
-        AvgT unit = hu * vu;
-        int spch = srcPixels.pitch, dpch = dstPixels.pitch;
-        WrtRefT pl = dstPixels.buffer + ((dtx + dsx) << 2) + ((dty + dsy) * dpch);
-        AvgInfoT const *vi = vert;
-        for (long y = dsy; y < dey; ++y, ++vi, pl += dpch) {
-            BufRefT rl = srcPixels.buffer + vi->offset;
-            AvgInfoT const *hi = horz;
-            long x = dsx;
-            for (WrtRefT p = pl; x < dex; ++x, ++hi, p += 4) {
-                ElementT sum = {0, 0, 0, 0};
-                BufRefT r = rl + hi->offset;
-                const int w = hi->step;
-                const int h = vi->step;
-                const int ox = w << 2;
-                const int oy = h * spch;
-                addPoint(sum, r - 4 - spch, hi->ta * vi->ta, hi->tc * vi->tc);
-                addHorz(sum, r - spch, w, hu * vi->ta, hu * vi->tc);
-                addPoint(sum, r + ox - spch, hi->ba * vi->ta, hi->bc * vi->tc);
-                addVert(sum, r - 4, h, hi->ta * vu, hi->tc * vu);
-                addRect(sum, r, w, h, unit);
-                addVert(sum, r + ox, h, hi->ba * vu, hi->bc * vu);
-                addPoint(sum, r - 4 + oy, hi->ta * vi->ba, hi->tc * vi->bc);
-                addHorz(sum, r + oy, w, hu * vi->ba, hu * vi->bc);
-                addPoint(sum, r + ox + oy, hi->ba * vi->ba, hi->bc * vi->bc);
-                AvgT div = hi->total * vi->total;
-                p[0] = (unsigned char)(sum.r / div);
-                p[1] = (unsigned char)(sum.g / div);
-                p[2] = (unsigned char)(sum.b / div);
-                p[3] = (unsigned char)(sum.a / div);
-            }
+        std::vector<AvgInfoT> tables((dex - dsx) + (dey - dsy));
+        auto horz = tables.data();
+        auto vert = horz + (dex - dsx);
+        makeAvgTable(horz, true);
+        makeAvgTable(vert, false);
+        std::vector<std::array<float, 4>> records;
+        records.reserve(tables.size() * 2);
+        for (size_t i = 0; i < tables.size(); ++i) {
+            const auto &entry = tables[i];
+            const int stride = i < size_t(dex - dsx) ? 4 : srcPixels.pitch;
+            records.push_back({float(entry.offset / stride), float(entry.step),
+                               float(entry.ta), float(entry.tc)});
+            records.push_back({float(entry.ba), float(entry.bc), float(entry.total), 0});
         }
-        std::free(buf);
+        TVPBevyRenderCommand command{};
+        command.operation = 4;
+        command.method = "ShrinkCopy";
+        command.target = TVPBevyTextureID(dstPixels.image->GetTexture());
+        command.sources[0] = TVPBevyTextureID(srcPixels.texture.get());
+        command.rect[0] = dtx + dsx; command.rect[1] = dty + dsy;
+        command.rect[2] = dtx + dex; command.rect[3] = dty + dey;
+        command.data = records.data();
+        command.pitch = records.size();
+        if (krkr_render_dispatch(&command))
+            TVPThrowExceptionMessage(TJS_W("Shrink copy GPU operation failed"));
     }
 
     struct MakeAvgWorkT {
@@ -247,56 +235,6 @@ struct ShrinkCopy {
         table->step = u2 - u1 - 1;
     }
 
-    static void *allocAvgBuffer(AvgInfoT *&horizontal, AvgInfoT *&vertical, long w, long h) {
-        void *buffer = std::malloc(sizeof(AvgInfoT) * w * h);
-        horizontal = static_cast<AvgInfoT *>(buffer);
-        vertical = horizontal + w;
-        return buffer;
-    }
-
-    void addRect(ElementT &sum, BufRefT p, int w, int h, AvgT mul) const {
-        if (!mul) return;
-        for (; h > 0; --h, p += srcPixels.pitch) {
-            auto r = reinterpret_cast<const PixelT *>(p);
-            for (int n = w; n > 0; --n, ++r) {
-                PixelT col = *r;
-                sum.r += (col & 0xff) * mul;
-                sum.g += ((col >> 8) & 0xff) * mul;
-                sum.b += ((col >> 16) & 0xff) * mul;
-                sum.a += (col >> 24) * mul;
-            }
-        }
-    }
-    void addVert(ElementT &sum, BufRefT p, int h, AvgT alphaMul, AvgT colorMul) const {
-        if (!alphaMul) return;
-        for (; h > 0; --h, p += srcPixels.pitch) {
-            PixelT col = *reinterpret_cast<const PixelT *>(p);
-            sum.r += (col & 0xff) * colorMul;
-            sum.g += ((col >> 8) & 0xff) * colorMul;
-            sum.b += ((col >> 16) & 0xff) * colorMul;
-            sum.a += (col >> 24) * alphaMul;
-        }
-    }
-    static void addHorz(ElementT &sum, BufRefT p, int w, AvgT alphaMul, AvgT colorMul) {
-        if (!alphaMul) return;
-        auto r = reinterpret_cast<const PixelT *>(p);
-        for (; w > 0; --w, ++r) {
-            PixelT col = *r;
-            sum.r += (col & 0xff) * colorMul;
-            sum.g += ((col >> 8) & 0xff) * colorMul;
-            sum.b += ((col >> 16) & 0xff) * colorMul;
-            sum.a += (col >> 24) * alphaMul;
-        }
-    }
-    static void addPoint(ElementT &sum, BufRefT p, AvgT alphaMul, AvgT colorMul) {
-        if (!alphaMul) return;
-        PixelT col = *reinterpret_cast<const PixelT *>(p);
-        sum.r += (col & 0xff) * colorMul;
-        sum.g += ((col >> 8) & 0xff) * colorMul;
-        sum.b += ((col >> 16) & 0xff) * colorMul;
-        sum.a += (col >> 24) * alphaMul;
-    }
-
     struct Destination {
         iTJSDispatch2 *object;
         real x, y, widthValue, heightValue;
@@ -334,72 +272,22 @@ struct LimitedShrink {
     bool resize() {
         auto layer = LayerObject(dstObject);
         if (!layer) return false;
+        layer->IndependMainImage();
         layer->SetImageSize((srcPixels.width + stepx - 1) / stepx,
                             (srcPixels.height + stepy - 1) / stepy);
         return WritePixels(dstObject, dstPixels);
     }
 
     void copyPixels() {
-        using PixelT = unsigned int;
-        long xdiv = srcPixels.width / stepx;
-        long xrem = srcPixels.width - xdiv * stepx;
-        auto shrinkLine = [](unsigned char *w, const unsigned char *r, long len, long shrink,
-                             long step, long tstep) {
-            if (shrink == 1) {
-                for (; len > 0; --len, r += step) {
-                    w[0] = r[0];
-                    w[1] = r[1];
-                    w[2] = r[2];
-                    w[3] = 255;
-                    w += 4;
-                }
-                return;
-            }
-            for (; len > 0; --len, r += step) {
-                unsigned int sr = 0, sg = 0, sb = 0;
-                const unsigned char *tr = r;
-                for (long sub = shrink; sub > 0; --sub, tr += tstep) {
-                    sr += tr[0];
-                    sg += tr[1];
-                    sb += tr[2];
-                }
-                w[0] = (unsigned char)(sr / shrink);
-                w[1] = (unsigned char)(sg / shrink);
-                w[2] = (unsigned char)(sb / shrink);
-                w[3] = 255;
-                w += 4;
-            }
-        };
-        auto shrinkLineX = [&](unsigned char *w, const unsigned char *r) {
-            shrinkLine(w, r, xdiv, stepx, stepx * 4, 4);
-            if (xrem > 0) shrinkLine(w, r, 1, xrem, 0, 4);
-        };
-
-        auto ps = srcPixels.buffer;
-        auto pd = dstPixels.buffer;
-        if (stepy <= 1) {
-            for (long y = 0; y < srcPixels.height; ++y, pd += dstPixels.pitch, ps += srcPixels.pitch)
-                shrinkLineX(pd, ps);
-            return;
-        }
-
-        long bpch = dstPixels.width * 4;
-        auto buf = static_cast<unsigned char *>(std::malloc(bpch * stepy));
-        if (!buf) return;
-        long div = srcPixels.height / stepy;
-        for (long len = div; len > 0; --len, pd += dstPixels.pitch) {
-            for (long sub = stepy, ofs = 0; sub > 0; --sub, ofs += bpch, ps += srcPixels.pitch)
-                shrinkLineX(buf + ofs, ps);
-            shrinkLine(pd, buf, dstPixels.width, stepy, 4, bpch);
-        }
-        div *= stepy;
-        if (div < srcPixels.height) {
-            long yrem = srcPixels.height - div;
-            for (long sub = yrem, ofs = 0; sub > 0; --sub, ofs += bpch, ps += srcPixels.pitch)
-                shrinkLineX(buf + ofs, ps);
-            shrinkLine(pd, buf, dstPixels.width, yrem, 4, bpch);
-        }
-        std::free(buf);
+        TVPBevyRenderCommand command{};
+        command.operation = 4;
+        command.method = "ShrinkCopyFast";
+        command.target = TVPBevyTextureID(dstPixels.image->GetTexture());
+        command.sources[0] = TVPBevyTextureID(srcPixels.texture.get());
+        command.rect[2] = dstPixels.width; command.rect[3] = dstPixels.height;
+        command.parameters[4] = stepx; command.parameters[5] = stepy;
+        if (krkr_render_dispatch(&command))
+            TVPThrowExceptionMessage(TJS_W("Fast shrink copy GPU operation failed"));
     }
 
     iTJSDispatch2 *dstObject, *srcObject;

@@ -3,13 +3,12 @@
 #include "ncbind/ncbind.hpp"
 #include "LayerIntf.h"
 #include "LayerBitmapIntf.h"
+#include "BevyRender.h"
 
 namespace {
 using FixDot = tjs_int;
 constexpr int DotBase = 12;
-constexpr FixDot IntToFix(tjs_int value) { return value << DotBase; }
 constexpr FixDot RealToFix(tjs_real value) { return (FixDot)(value * (1 << DotBase)); }
-constexpr tjs_int FixToInt(FixDot value) { return value >> DotBase; }
 
 struct AreaAverage {
     static tjs_error TJS_INTF_METHOD stretchCopyAA(tTJSVariant *, tjs_int count, tTJSVariant **params,
@@ -65,79 +64,23 @@ struct AreaAverage {
         }
         if (dWidth <= 0 || dHeight <= 0 || sWidth <= 0 || sHeight <= 0) return TJS_S_OK;
 
-        FixDot sl = IntToFix(sLeft), st = IntToFix(sTop);
-        FixDot rw = RealToFix((tjs_real)sWidth / dWidth);
-        FixDot rh = RealToFix((tjs_real)sHeight / dHeight);
-        tjs_int dPitch = dstImage->GetPitchBytes(), sPitch = srcImage->GetPitchBytes();
-        auto dBuffer = static_cast<unsigned char *>(dstImage->GetScanLineForWrite(0));
-        auto sBuffer = static_cast<const unsigned char *>(srcImage->GetScanLine(0));
-
-        for (tjs_int y = 0; y < dHeight; ++y) {
-            auto output = reinterpret_cast<tjs_uint32 *>(dBuffer + (y + dTop) * dPitch) + dLeft;
-            for (tjs_int x = 0; x < dWidth; ++x) {
-                FixDot x1 = sl + x * rw, y1 = st + y * rh;
-                FixDot x2 = x1 + rw, y2 = y1 + rh;
-                tjs_int sx = FixToInt(x1), sy = FixToInt(y1);
-                tjs_int ex = FixToInt(x2 + IntToFix(1) - 1);
-                tjs_int ey = FixToInt(y2 + IntToFix(1) - 1);
-                if (ex >= sImageWidth) ex = sImageWidth - 1;
-                if (ey >= sImageHeight) ey = sImageHeight - 1;
-
-                FixDot totalAreaAlpha = 0, alpha = 0;
-                FixDot totalAreaColor = 0, red = 0, green = 0, blue = 0;
-                FixDot totalAreaTransparent = 0, tr = 0, tg = 0, tb = 0;
-                for (tjs_int ay = sy; ay < ey; ++ay) {
-                    auto input = reinterpret_cast<const tjs_uint32 *>(sBuffer + ay * sPitch) + sx;
-                    FixDot e1 = IntToFix(ay), e2 = IntToFix(ay + 1);
-                    if (e1 < y1) e1 = y1;
-                    if (e2 > y2) e2 = y2;
-                    FixDot ah = e2 - e1;
-                    for (tjs_int ax = sx; ax < ex; ++ax, ++input) {
-                        e1 = IntToFix(ax);
-                        e2 = IntToFix(ax + 1);
-                        if (e1 < x1) e1 = x1;
-                        if (e2 > x2) e2 = x2;
-                        FixDot area = ((e2 - e1) * ah) >> DotBase;
-                        totalAreaAlpha += area;
-                        tjs_uint32 pixel = *input;
-                        tjs_uint32 a = (pixel >> 24) & 0xff;
-                        alpha += a * area;
-                        if (a > 0) {
-                            area = (area * a) >> 8;
-                            red += (pixel & 0xff) * area;
-                            green += ((pixel >> 8) & 0xff) * area;
-                            blue += ((pixel >> 16) & 0xff) * area;
-                            totalAreaColor += area;
-                        } else {
-                            tr += (pixel & 0xff) * area;
-                            tg += ((pixel >> 8) & 0xff) * area;
-                            tb += ((pixel >> 16) & 0xff) * area;
-                            totalAreaTransparent += area;
-                        }
-                    }
-                }
-                if (totalAreaAlpha == 0) continue;
-                alpha /= totalAreaAlpha;
-                if (totalAreaColor == 0) {
-                    totalAreaColor = totalAreaTransparent;
-                    red = tr;
-                    green = tg;
-                    blue = tb;
-                }
-                if (totalAreaColor == 0) {
-                    red = green = blue = 0;
-                } else {
-                    red /= totalAreaColor;
-                    green /= totalAreaColor;
-                    blue /= totalAreaColor;
-                }
-                *output = (((tjs_int)alpha & 0xff) << 24) | (((tjs_int)blue & 0xff) << 16) |
-                          (((tjs_int)green & 0xff) << 8) | ((tjs_int)red & 0xff);
-                ++output;
-            }
-        }
-
-        dstImage->Update(dBuffer, dPitch, dLeft, dTop, dWidth, dHeight);
+        dstLayer->IndependMainImage();
+        auto texture = dstLayer->GetMainImage()->GetTexture();
+        TVPBevyRenderCommand command{};
+        command.operation = 4;
+        command.method = "LayerExAreaAverage";
+        command.target = TVPBevyTextureID(texture);
+        command.sources[0] = TVPBevyTextureID(srcLayer->GetMainImage()->GetTexture());
+        command.rect[0] = dLeft; command.rect[1] = dTop;
+        command.rect[2] = dLeft + dWidth; command.rect[3] = dTop + dHeight;
+        command.source_rects[0][0] = sLeft; command.source_rects[0][1] = sTop;
+        command.source_rects[0][2] = sLeft + sWidth;
+        command.source_rects[0][3] = sTop + sHeight;
+        command.parameters[4] = RealToFix((tjs_real)sWidth / dWidth);
+        command.parameters[5] = RealToFix((tjs_real)sHeight / dHeight);
+        if (krkr_render_dispatch(&command))
+            TVPThrowExceptionMessage(TJS_W("Area average GPU operation failed"));
+        TVPBevyInvalidateTexture(texture);
         dstLayer->SetImageModified(true);
         dstLayer->Update(tTVPRect(dLeft + dstLayer->GetImageLeft(), dTop + dstLayer->GetImageTop(),
                                   dLeft + dWidth + dstLayer->GetImageLeft(),
