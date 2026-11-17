@@ -11,9 +11,11 @@
 #include "tjsCommHead.h"
 
 #include <algorithm>
+#include <set>
 #include <stdexcept>
 #include <memory>
 #include "StorageIntf.h"
+#include "win32/StorageImpl.h"
 #include "tjsUtils.h"
 #include "MsgIntf.h"
 #include "EventIntf.h"
@@ -1026,6 +1028,69 @@ void TVPAddAutoPath(const ttstr & name)
 	TVPClearAutoPathCache();
 }
 //---------------------------------------------------------------------------
+void TVPAddAutoPathRecursive(const ttstr &name)
+{
+	std::vector<ttstr> paths(1, TVPNormalizeStorageName(name));
+	std::set<ttstr> queued(paths.begin(), paths.end());
+	std::set<ttstr> expanded;
+	for(size_t index = 0; index < paths.size(); index++)
+	{
+		const ttstr path = paths[index];
+		TVPAddAutoPath(path);
+		if(expanded.find(path) != expanded.end()) continue;
+		expanded.insert(path);
+
+		const tjs_char *sharp_pos = TJS_strchr(path.c_str(), TVPArchiveDelimiter);
+		if(sharp_pos)
+		{
+			ttstr arcname(path, (int)(sharp_pos - path.c_str()));
+			ttstr prefix(sharp_pos + 1);
+			tTVPArchive::NormalizeInArchiveStorageName(prefix);
+			tTVPArchive *arc = TVPArchiveCache.Get(arcname);
+			try
+			{
+				for(tjs_uint i = 0; i < arc->GetCount(); i++)
+				{
+					const ttstr &entry = arc->GetName(i);
+					if(!entry.StartsWith(prefix)) continue;
+
+					ttstr rest(entry.c_str() + prefix.GetLen());
+					ttstr child(arcname);
+					child += TVPArchiveDelimiter;
+					child += prefix;
+					const tjs_char *slash = TJS_strchr(rest.c_str(), TJS_W('/'));
+					while(slash)
+					{
+						child += ttstr(rest.c_str(), (int)(slash - rest.c_str()) + 1);
+						if(queued.insert(child).second)
+							paths.push_back(child);
+						expanded.insert(child);
+						rest = ttstr(slash + 1);
+						slash = TJS_strchr(rest.c_str(), TJS_W('/'));
+					}
+				}
+			}
+			catch(...)
+			{
+				arc->Release();
+				throw;
+			}
+			arc->Release();
+		}
+		else
+		{
+			ttstr local = TVPGetLocallyAccessibleName(path);
+			if(local.IsEmpty()) continue;
+			TVPGetLocalFileListAt(local, [&](const ttstr &entry, tTVPLocalFileInfo *info) {
+				if(!(info->Mode & S_IFDIR)) return;
+				ttstr child = path + entry + TJS_W("/");
+				if(queued.insert(child).second)
+					paths.push_back(child);
+			});
+		}
+	}
+}
+//---------------------------------------------------------------------------
 void TVPRemoveAutoPath(const ttstr &name)
 {
 	tTJSCriticalSectionHolder cs_holder(TVPCreateStreamCS);
@@ -1378,6 +1443,30 @@ tTJSNC_Storages::tTJSNC_Storages() : inherited(TJS_W("Storages"))
 
 //-- methods
 
+//----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/setCurrentDirectory)
+{
+	if(numparams < 1) return TJS_E_BADPARAMCOUNT;
+
+	TVPSetCurrentDirectory(*param[0]);
+
+	if(result) result->Clear();
+
+	return TJS_S_OK;
+}
+TJS_END_NATIVE_STATIC_METHOD_DECL(/*func. name*/setCurrentDirectory)
+//----------------------------------------------------------------------
+TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/addAutoPathRecursive)
+{
+	if(numparams < 1) return TJS_E_BADPARAMCOUNT;
+
+	TVPAddAutoPathRecursive(*param[0]);
+
+	if(result) result->Clear();
+
+	return TJS_S_OK;
+}
+TJS_END_NATIVE_STATIC_METHOD_DECL(/*func. name*/addAutoPathRecursive)
 //----------------------------------------------------------------------
 TJS_BEGIN_NATIVE_METHOD_DECL(/*func. name*/addAutoPath)
 {
