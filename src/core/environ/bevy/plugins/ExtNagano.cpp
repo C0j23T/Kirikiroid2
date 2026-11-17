@@ -1,6 +1,6 @@
 #define NCB_MODULE_NAME TJS_W("extNagano.dll")
 #include "ncbind/ncbind.hpp"
-#include "ExtraTrans.h"
+#include "extrans/ExtraTrans.h"
 // extNagano algorithms: ヤマモト / Shun / chiyoclone.net / シノハラ; Kirikiri license.
 // Source and full license: LICENSE-THIRD-PARTY.md.
 #pragma once

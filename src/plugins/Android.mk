@@ -8,6 +8,7 @@ LOCAL_SRC_FILES := \
 $(wildcard $(LOCAL_PATH)/*.cpp) \
 $(wildcard $(LOCAL_PATH)/*.c) \
 ncbind/ncbind.cpp \
+xp3filter/xp3filter.cpp \
 
 LOCAL_SRC_FILES := $(LOCAL_SRC_FILES:$(LOCAL_PATH)/%=%)
 
