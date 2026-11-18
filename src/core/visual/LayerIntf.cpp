@@ -428,6 +428,7 @@ tTJSNI_BaseLayer::tTJSNI_BaseLayer()
 //---------------------------------------------------------------------------
 tTJSNI_BaseLayer::~tTJSNI_BaseLayer()
 {
+	SetCallOnPaint(false);
 	tTVPTempBitmapHolder::Release();
 }
 //---------------------------------------------------------------------------
@@ -5671,6 +5672,7 @@ void tTJSNI_BaseLayer::StartTransition(const ttstr &name, bool withchildren,
 
 		// set flag
 		InTransition = true;
+		if (DivisibleTransHandler) ++DivisibleTransitionCount;
 		TransCompEventPrevented = false;
 
 		// update
@@ -5693,6 +5695,7 @@ void tTJSNI_BaseLayer::InternalStopTransition()
 	if(InTransition)
 	{
 		InTransition = false;
+		if (DivisibleTransHandler) --DivisibleTransitionCount;
 		TransCompEventPrevented = false;
 
 		// unregister idle event handler

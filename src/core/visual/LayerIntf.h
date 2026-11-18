@@ -881,7 +881,9 @@ protected:
 	tTVPComplexRect DrawnRegion; // region that is already marked as "blitted"
 	bool DirectTransferToParent; // child image should be directly transfered into parent
 
-	bool CallOnPaint; // call onPaint event when flaged
+	bool CallOnPaint;
+	inline static unsigned PendingPaintCount = 0;
+	inline static unsigned DivisibleTransitionCount = 0;
 
 	void UpdateTransDestinationOnSelfUpdate(const tTVPComplexRect &region);
 	void UpdateTransDestinationOnSelfUpdate(const tTVPRect &rect);
@@ -898,10 +900,16 @@ public:
 
 	void UpdateAllChildren(bool tempupdate = false);
 
-	void UpdateByScript(const tTVPRect &rect) { CallOnPaint = true; Update(rect); }
-	void UpdateByScript() { CallOnPaint = true; Update(); }
+	void UpdateByScript(const tTVPRect &rect) { SetCallOnPaint(true); Update(rect); }
+	void UpdateByScript() { SetCallOnPaint(true); Update(); }
 
-	void SetCallOnPaint(bool b) { CallOnPaint = b; }
+	void SetCallOnPaint(bool b)
+	{
+		if (CallOnPaint == b) return;
+		CallOnPaint = b;
+		if (b) ++PendingPaintCount;
+		else --PendingPaintCount;
+	}
 	bool GetCallOnPaint() const { return CallOnPaint; }
 
 private:

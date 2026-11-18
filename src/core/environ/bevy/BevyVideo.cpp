@@ -382,7 +382,7 @@ void TVPBevyResetVideo()
     krkr_video_dispatch(&command);
 }
 
-uint64_t TVPBevyCompositeVideo(void *window, uint64_t target)
+void TVPBevyCompositeVideo(void *window, uint64_t target)
 {
     for (auto video : Videos)
     {
@@ -408,5 +408,4 @@ uint64_t TVPBevyCompositeVideo(void *window, uint64_t target)
         if (krkr_render_dispatch(&command))
             throw std::runtime_error("Video composition failed");
     }
-    return target;
 }

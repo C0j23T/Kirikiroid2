@@ -48,4 +48,4 @@ enum TVPBevyVideoOperation : uint32_t
 extern "C" int krkr_video_dispatch(TVPBevyVideoCommand *command);
 void TVPBevyTickVideo();
 void TVPBevyResetVideo();
-uint64_t TVPBevyCompositeVideo(void *window, uint64_t target);
+void TVPBevyCompositeVideo(void *window, uint64_t target);
