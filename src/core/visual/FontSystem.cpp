@@ -3,6 +3,7 @@
 #include "tjsCommHead.h"
 
 #include "FontSystem.h"
+#include "FontImpl.h"
 #include "StringUtil.h"
 #include "MsgIntf.h"
 #include <vector>
@@ -30,11 +31,8 @@ void FontSystem::AddFont(const ttstr& name) {
 }
 //---------------------------------------------------------------------------
 bool FontSystem::FontExists(const ttstr &name) {
-	// check existence of font
-	InitFontNames();
-
-	int * t = TVPFontNames.Find(name);
-	return t != NULL;
+	// addFont may extend the global table after this object was initialized.
+	return TVPFindFont(name) != NULL;
 }
 
 FontSystem::FontSystem() : FontNamesInit(false), DefaultLOGFONTCreated(false) {
