@@ -34,31 +34,46 @@ struct TextOutline {
         if(hint==1 || hint==2) loadFlags|=FT_LOAD_TARGET_MONO;
         const FT_Outline_Funcs funcs{move,line,conic,cubic,0,0};
         int length=text.GetLen(), lines=0;
+        std::vector<DrawingFace> faces;
+        auto addFace=[&](const PrivateFontData &data) {
+            faces.push_back({data.bytes->data(),data.bytes->size(),static_cast<uint32_t>(data.index)});
+        };
+        addFace(*holder.data);
+        for(auto &face:privateFonts()) if(face!=holder.data) addFace(*face);
         for(int start=0;start<length;) {
             int end=start;
             while(end<length && text[end]!='\r' && text[end]!='\n') ++end;
             double baseline=top+lines*lineHeight+holder.ascent();
             double pen=left;
             if(end>start) {
-                PositionedGlyph *glyphs=nullptr;
-                size_t count=0;
-                if(!krkr_host_shape_line(holder.data->bytes->data(),holder.data->bytes->size(),holder.data->index,
-                    text.c_str()+start,end-start,&glyphs,&count))
-                    TVPThrowExceptionMessage(TJS_W("Could not shape text"));
-                auto cleanup=[count](PositionedGlyph *p){krkr_host_release_glyphs(p,count);};
-                std::unique_ptr<PositionedGlyph,decltype(cleanup)> guard(glyphs,cleanup);
-                for(size_t i=0;i<count;++i) {
-                    auto &g=glyphs[i];
-                    originX=pen+holder.scale(g.xOffset);
-                    originY=baseline-holder.scale(g.yOffset);
-                    holder.load(g.glyph,loadFlags);
-                    auto slot=holder.face->glyph;
-                    if(slot->format==FT_GLYPH_FORMAT_OUTLINE && slot->outline.n_points) {
-                        if(FT_Outline_Decompose(&slot->outline,&funcs,this))
-                            TVPThrowExceptionMessage(TJS_W("Could not decompose glyph outline"));
-                        path.closeFigure();
+                auto render=[&](const unsigned char *bytes,size_t size,unsigned index,const PositionedGlyph *glyphs,size_t count) {
+                    std::unique_ptr<FontFace> fallback;
+                    if(bytes!=faces[0].bytes || index!=faces[0].index)
+                        fallback=std::make_unique<FontFace>(bytes,size,index,font.size,font.style);
+                    const auto &face=fallback ? *fallback : holder;
+                    for(size_t i=0;i<count;++i) {
+                        const auto &g=glyphs[i];
+                        originX=pen+face.scale(g.xOffset);
+                        originY=baseline-face.scale(g.yOffset);
+                        face.load(g.glyph,loadFlags);
+                        auto slot=face.face->glyph;
+                        if(slot->format==FT_GLYPH_FORMAT_OUTLINE && slot->outline.n_points) {
+                            if(FT_Outline_Decompose(&slot->outline,&funcs,this))
+                                TVPThrowExceptionMessage(TJS_W("Could not decompose glyph outline"));
+                            path.closeFigure();
+                        }
+                        pen+=face.scale(g.advance);
                     }
-                    pen+=holder.scale(g.advance);
+                };
+                struct Run { decltype(render) &visit; std::exception_ptr error; } run{render,{}};
+                auto visit=[](void *context,const unsigned char *bytes,size_t size,uint32_t index,const PositionedGlyph *glyphs,size_t count) noexcept {
+                    auto &run=*static_cast<Run*>(context);
+                    try { run.visit(bytes,size,index,glyphs,count); return true; }
+                    catch(...) { run.error=std::current_exception(); return false; }
+                };
+                if(!krkr_host_shape_line(faces.data(),faces.size(),text.c_str()+start,end-start,font.style,&run,visit)) {
+                    if(run.error) std::rethrow_exception(run.error);
+                    TVPThrowExceptionMessage(TJS_W("Could not shape text"));
                 }
             }
             double width=pen-left;

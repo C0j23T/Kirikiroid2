@@ -1,11 +1,12 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
 using FontVisitor=bool (*)(void *,const unsigned char *,size_t,uint32_t);
-struct PositionedGlyph { uint32_t glyph; int32_t xOffset,yOffset,advance; uint32_t character; };
+struct PositionedGlyph { uint32_t glyph; int32_t xOffset,yOffset,advance; uint32_t cluster; };
 extern "C" bool krkr_host_font_list(void *,FontVisitor);
 extern "C" bool krkr_host_font_face(const tjs_char *,size_t,uint32_t,void *,FontVisitor);
-extern "C" bool krkr_host_shape_line(const unsigned char *,size_t,uint32_t,const tjs_char *,size_t,PositionedGlyph **,size_t *);
-extern "C" void krkr_host_release_glyphs(PositionedGlyph *,size_t);
+struct DrawingFace { const unsigned char *bytes; size_t length; uint32_t index; };
+using GlyphVisitor=bool (*)(void *,const unsigned char *,size_t,uint32_t,const PositionedGlyph *,size_t);
+extern "C" bool krkr_host_shape_line(const DrawingFace *,size_t,const tjs_char *,size_t,uint32_t,void *,GlyphVisitor);
 
 struct PrivateFontData {
     ttstr source;
@@ -93,7 +94,13 @@ struct FontFace {
                 data->index=info ? info->Index : 0;
             }
         }
-        if(FT_New_Memory_Face(TVPGetFontLibrary(),data->bytes->data(),data->bytes->size(),data->index,&face))
+        open(data->bytes->data(),data->bytes->size(),data->index,size);
+    }
+    FontFace(const unsigned char *bytes,size_t length,unsigned index,double size,int style):style(style) {
+        open(bytes,length,index,size);
+    }
+    void open(const unsigned char *bytes,size_t length,unsigned index,double size) {
+        if(FT_New_Memory_Face(TVPGetFontLibrary(),bytes,length,index,&face))
             TVPThrowExceptionMessage(TJS_W("Could not create font face"));
         if(!FT_IS_SCALABLE(face) || !face->units_per_EM ||
            FT_Set_Char_Size(face,0,static_cast<FT_F26Dot6>(std::max(1.0,std::round(size*64))),72,72)) {
