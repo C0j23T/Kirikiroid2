@@ -8,6 +8,15 @@ struct Readback {
         tTJSVariant options=count>2 ? *p[2] : tTJSVariant();
         auto object=options.Type()==tvtObject ? options.AsObjectNoAddRef() : nullptr;
         int depth=number(options,TJS_W("depth"),24);
+        int transform=number(options,TJS_W("transform"),number(options,TJS_W("tansform"),-1));
+        Image transformed;
+        if(transform!=-1) {
+            constexpr int rotations[]={1,2,3,4,6};
+            if(transform<13 || transform>17) return TJS_E_INVALIDPARAM;
+            transformed.texture=std::make_shared<tTVPBaseTexture>(*image);
+            if(transformed.RotateFlip(rotations[transform-13])) return TJS_E_FAIL;
+            image=transformed.texture.get();
+        }
         if(mime==TJS_W("image/png") || mime==TJS_W("image/bmp")) {
             std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(ttstr(*p[0]),TJS_BS_WRITE));
             if(mime==TJS_W("image/png")) TVPSaveAsPNG(nullptr,stream.get(),image,TJS_W("png"),object);

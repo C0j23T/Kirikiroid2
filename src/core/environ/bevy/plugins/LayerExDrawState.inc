@@ -162,14 +162,17 @@ bool DrawState::saveRecord(ttstr name) {
 }
 
 bool DrawState::loadRecord(ttstr name) {
-    std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_READ));
-    auto length=stream->GetSize();
-    if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Metafile is too large"));
-    std::vector<unsigned char> bytes(static_cast<size_t>(length)); stream->ReadBuffer(bytes.data(),bytes.size());
-    uint64_t id=0;
-    if(krkr_layer_ex_record_decode(bytes.data(),bytes.size(),&id)) TVPThrowExceptionMessage(TJS_W("Could not decode EMF+ record"));
+    Image source; source.load(name);
+    auto next=source.record;
+    if(!next) {
+        double dpi[]={source.GetHorizontalResolution(),source.GetVerticalResolution()};
+        uint64_t id=0;
+        if(krkr_layer_ex_record_capture(TVPBevyTextureID(source.texture->GetTexture()),dpi,&id))
+            TVPThrowExceptionMessage(TJS_W("Could not create bitmap record"));
+        next=std::make_shared<DrawRecord>(id);
+    }
     auto previous=record; bool wasRecording=recording;
-    record=std::make_shared<DrawRecord>(id); recording=true;
+    record=std::move(next); recording=true;
     try { redrawRecord(); } catch(...) { record=previous; recording=wasRecording; throw; }
     return true;
 }

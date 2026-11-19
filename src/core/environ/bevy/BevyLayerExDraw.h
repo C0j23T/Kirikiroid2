@@ -81,6 +81,7 @@ struct TVPBevyDrawRecordInfo {
 };
 
 extern "C" int krkr_layer_ex_record_create(uint32_t width,uint32_t height,uint32_t background,uint64_t *record);
+extern "C" int krkr_layer_ex_record_capture(uint64_t source,const double *dpi,uint64_t *record);
 extern "C" int krkr_layer_ex_record_append(uint64_t record,const TVPBevyLayerExDraw *operation,uint32_t smoothing);
 extern "C" int krkr_layer_ex_record_append_image(uint64_t record,uint64_t image,const double *source_rect,const double *transform);
 extern "C" int krkr_layer_ex_record_decode(const void *bytes,size_t length,uint64_t *record);
