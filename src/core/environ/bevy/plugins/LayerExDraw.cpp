@@ -157,12 +157,26 @@ struct Appearance {
                     p.x1=cx-dx*extent/2; p.y1=cy-dy*extent/2;
                     p.x2=cx+dx*extent/2; p.y2=cy+dy*extent/2;
                 } else TVPThrowExceptionMessage(TJS_W("Linear gradient requires points or rect"));
-                if(p.tile[2]==0 || p.tile[3]==0) p.tile={std::min(p.x1,p.x2),std::min(p.y1,p.y2),std::abs(p.x2-p.x1),std::abs(p.y2-p.y1)};
+                double dx=p.x2-p.x1,dy=p.y2-p.y1,length=std::hypot(dx,dy);
+                if(length==0) TVPThrowExceptionMessage(TJS_W("Gradient endpoints must differ"));
+                const double cx=(p.x1+p.x2)/2,cy=(p.y1+p.y2)/2;
+                if(p.tile[2]==0 || p.tile[3]==0) {
+                    double w=dx==0 ? std::abs(dy) : std::abs(dx);
+                    double h=dy==0 ? std::abs(dx) : std::abs(dy);
+                    p.tile={cx-w/2,cy-h/2,w,h};
+                }
+                auto w=p.tile[2],h=p.tile[3];
+                double perpendicular=(std::abs(dy)*w+std::abs(dx)*h)/(length*length*h);
+                auto &m=p.matrix.elements;
+                m={dx/w,dy/w,-dy*perpendicular,dx*perpendicular,0,0};
+                m[4]=cx-m[0]*cx-m[2]*cy;
+                m[5]=cy-m[1]*cx-m[3]*cy;
+                p.x1=p.tile[0]; p.x2=p.x1+w; p.y1=p.y2=cy;
                 p.wrap=number(color,TJS_W("wrapMode"),0);
                 if(p.wrap<0 || p.wrap>4) TVPThrowExceptionMessage(TJS_W("Invalid gradient wrap mode"));
             } else TVPThrowExceptionMessage(TJS_W("Unsupported brush type"));
             if(type==3 || type==4) {
-                auto transform=member(color,TJS_W("transform")); if(transform.Type()!=tvtVoid) p.matrix=Matrix::read(transform);
+                auto transform=member(color,TJS_W("transform")); if(transform.Type()!=tvtVoid) p.matrix.multiply(Matrix::read(transform),1);
                 p.brushFlags=number(color,TJS_W("useGammaCorrection"),number(color,TJS_W("gammaCorrection"),0))!=0;
                 auto interpolation=member(color,TJS_W("interpolationColors"));
                 if(interpolation.Type()==tvtObject) {
@@ -310,19 +324,9 @@ static tTJSVariant rect(double x,double y,double w,double h) {
 struct Layer {
     static tjs_error TJS_INTF_METHOD clear(tTJSVariant *,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
         if(count<1) return TJS_E_BADPARAMCOUNT;
-        tTJSNI_BaseLayer *layer=nullptr;
-        if(TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,(iTJSNativeInstance**)&layer))) return TJS_E_INVALIDPARAM;
-        layer->IndependMainImage(); auto image=layer->GetMainImage();
+        auto layer=drawingLayer(obj);
         const tjs_uint32 color=tjs_uint32(p[0]->AsInteger());
-        TVPBevyRenderCommand c{}; c.operation=4; c.method="FillARGB";
-        c.target=TVPBevyTextureID(image->GetTexture());
-        c.rect[2]=image->GetWidth(); c.rect[3]=image->GetHeight();
-        c.parameters[12]=float((color>>16)&255)/255;
-        c.parameters[13]=float((color>>8)&255)/255;
-        c.parameters[14]=float(color&255)/255;
-        c.parameters[15]=float((color>>24)&255)/255;
-        if(krkr_render_dispatch(&c)) return TJS_E_FAIL;
-        TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
+        clearDrawingLayer(layer,color);
         auto state=DrawState::get(obj);
         if(state->recording) state->clearRecord(color);
         if(state->updateWhenDraw) layer->Update();

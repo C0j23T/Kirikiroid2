@@ -130,12 +130,15 @@ void DrawState::setRecord(bool value) {
 
 bool DrawState::redrawRecord() {
     if(!recording || !record) return false;
-    auto layer=drawingLayer(owner); clearDrawingLayer(layer,0);
+    auto layer=drawingLayer(owner);
+    auto image=layer->GetMainImage();
+    tTVPBaseTexture output(image->GetWidth(),image->GetHeight());
+    output.Fill(tTVPRect(0,0,output.GetWidth(),output.GetHeight()),0);
     auto clip=layer->GetClip(); int32_t rect[4]={clip.left,clip.top,clip.right,clip.bottom};
     auto type=layer->GetType(); unsigned alpha=type==ltAddAlpha ? 1 : type==ltOpaque ? 2 : 0;
-    if(krkr_layer_ex_record_replay(record->id,TVPBevyTextureID(layer->GetMainImage()->GetTexture()),rect,viewTransform.elements.data(),alpha))
+    if(krkr_layer_ex_record_replay(record->id,TVPBevyTextureID(output.GetTexture()),rect,viewTransform.elements.data(),alpha))
         TVPThrowExceptionMessage(TJS_W("Could not replay drawing record"));
-    TVPBevyInvalidateTexture(layer->GetMainImage()->GetTexture()); layer->SetImageModified(true);
+    TVPBevyInvalidateTexture(output.GetTexture()); image->Assign(output); layer->SetImageModified(true);
     if(updateWhenDraw) layer->Update();
     return true;
 }

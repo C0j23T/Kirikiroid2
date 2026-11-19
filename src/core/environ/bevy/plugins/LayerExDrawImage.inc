@@ -104,6 +104,7 @@ struct Image {
         if(!record) TVPThrowExceptionMessage(TJS_W("Image is empty"));
         auto info=record->info();
         auto output=std::make_shared<tTVPBaseTexture>(info.width,info.height);
+        output->Fill(tTVPRect(0,0,info.width,info.height),0);
         int32_t clip[]={0,0,int32_t(info.width),int32_t(info.height)};
         Matrix view; view.translate(-info.bounds[0],-info.bounds[1],1);
         if(krkr_layer_ex_record_replay(record->id,TVPBevyTextureID(output->GetTexture()),clip,view.elements.data(),0))
@@ -129,6 +130,7 @@ struct Image {
         if(type<0 || type>7 || !texture) { status=2; return 2; }
         unsigned width=GetWidth(),height=GetHeight();
         auto output=std::make_shared<tTVPBaseTexture>(type%2 ? height : width,type%2 ? width : height);
+        output->Fill(tTVPRect(0,0,output->GetWidth(),output->GetHeight()),0);
         double transforms[4][6]={{1,0,0,1,0,0},{0,1,-1,0,double(height),0},
                                  {-1,0,0,-1,double(width),double(height)},{0,-1,1,0,0,double(width)}};
         Matrix matrix; std::copy(transforms[type%4],transforms[type%4]+6,matrix.elements.begin());
