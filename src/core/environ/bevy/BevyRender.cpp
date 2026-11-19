@@ -414,12 +414,13 @@ uint64_t TVPBevyTextureID(iTVPTexture2D *texture)
     t.Flush();
     return t.ID;
 }
-void TVPBevyInvalidateTexture(iTVPTexture2D *texture)
+void TVPBevyInvalidateTexture(iTVPTexture2D *texture, bool updateScene)
 {
     if (texture)
     {
         static_cast<Texture *>(texture)->Invalidate();
-        TVPBevyMarkSceneDirty();
+        if (updateScene)
+            TVPBevyMarkSceneDirty();
     }
 }
 void TVPBevyCopyTextureChannels(iTVPTexture2D *target, iTVPTexture2D *source,

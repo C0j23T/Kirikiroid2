@@ -49,9 +49,20 @@ struct DrawState {
     }
 };
 
+static void updateDrawingBounds(tTJSNI_BaseLayer *layer,double x,double y,double w,double h) {
+    if(!(w>0 && h>0)) return;
+    const auto clip=layer->GetClip();
+    auto edge=[](double v,int start,int end) {return static_cast<int>(std::clamp(v,double(start),double(end)));};
+    tTVPRect dirty(edge(std::floor(x),clip.left,clip.right),edge(std::floor(y),clip.top,clip.bottom),
+                   edge(std::ceil(x+w),clip.left,clip.right),edge(std::ceil(y+h),clip.top,clip.bottom));
+    if(dirty.is_empty()) return;
+    dirty.add_offsets(layer->GetImageLeft(),layer->GetImageTop());
+    layer->Update(dirty);
+}
+
 static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLayer *layer,const Path &path,const Appearance &appearance,int aliasing=-1) {
     auto state=DrawState::get(obj);
-    if(path.commands.size()>1000000 || appearance.paints.size()>4096)
+    if(path.commands.size()>1000000 || appearance.paints.size()>1024)
         TVPThrowExceptionMessage(TJS_W("Drawing operation is too large"));
     if(path.commands.empty() || appearance.paints.empty()) {
         if(result) *result=rect(0,0,0,0);
@@ -89,8 +100,8 @@ static tjs_error drawPath(tTJSVariant *result,iTJSDispatch2 *obj,tTJSNI_BaseLaye
         if(krkr_layer_ex_record_append(state->record->id,&operation,state->smoothingMode))
             TVPThrowExceptionMessage(TJS_W("Could not append drawing record"));
     }
-    TVPBevyInvalidateTexture(image->GetTexture()); layer->SetImageModified(true);
-    if(state->updateWhenDraw) layer->Update();
+    TVPBevyInvalidateTexture(image->GetTexture(),false); layer->SetImageModified(true);
+    if(state->updateWhenDraw) updateDrawingBounds(layer,operation.bounds[0],operation.bounds[1],operation.bounds[2],operation.bounds[3]);
     if(result) *result=rect(operation.bounds[0],operation.bounds[1],operation.bounds[2],operation.bounds[3]);
     return TJS_S_OK;
 }
@@ -260,10 +271,12 @@ template<int Kind> static tjs_error TJS_INTF_METHOD imageOperation(tTJSVariant *
             TVPThrowExceptionMessage(TJS_W("Could not draw metafile image"));
         if(state->recording && krkr_layer_ex_record_append_image(state->record->id,native->record->id,sourceRect,world.elements.data()))
             TVPThrowExceptionMessage(TJS_W("Could not record metafile image"));
-        TVPBevyInvalidateTexture(target->GetTexture()); layer->SetImageModified(true); if(state->updateWhenDraw) layer->Update();
+        TVPBevyInvalidateTexture(target->GetTexture(),false); layer->SetImageModified(true);
         auto a=view.apply({crop.x,crop.y}),b=view.apply({crop.right(),crop.y}),c=view.apply({crop.right(),crop.bottom()}),d=view.apply({crop.x,crop.bottom()});
         double left=std::min({a.x,b.x,c.x,d.x}),top=std::min({a.y,b.y,c.y,d.y});
-        if(result) *result=rect(left,top,std::max({a.x,b.x,c.x,d.x})-left,std::max({a.y,b.y,c.y,d.y})-top);
+        double width=std::max({a.x,b.x,c.x,d.x})-left,height=std::max({a.y,b.y,c.y,d.y})-top;
+        if(state->updateWhenDraw) updateDrawingBounds(layer,left,top,width,height);
+        if(result) *result=rect(left,top,width,height);
         return TJS_S_OK;
     }
     Path path;

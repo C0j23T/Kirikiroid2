@@ -84,7 +84,7 @@ struct Appearance {
     }
     void add(tTJSVariant color,double width,double ox,double oy,bool pen=false) {
         Paint p{}; p.width=width; p.ox=ox; p.oy=oy; p.pen=pen;
-        if(!std::isfinite(width) || width<0 || width>256 || !std::isfinite(ox) || !std::isfinite(oy)) TVPThrowExceptionMessage(TJS_W("Invalid appearance dimensions"));
+        if(!std::isfinite(width) || width<0 || width>1e9 || !std::isfinite(ox) || !std::isfinite(oy)) TVPThrowExceptionMessage(TJS_W("Invalid appearance dimensions"));
         if(color.Type()!=tvtObject) p.a=p.b=tjs_uint32(color.AsInteger());
         else {
             int type=number(color,TJS_W("type"),0);
