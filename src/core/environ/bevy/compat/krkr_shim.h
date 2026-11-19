@@ -123,7 +123,11 @@ typedef struct KrkrDrawingEncoder {
     uint32_t format;
     int32_t depth, compression, scan, version, render, quality;
 } KrkrDrawingEncoder;
-int krkr_drawing_bitmap_decode(const void *data, size_t length, uint32_t *width, uint32_t *height,
+typedef struct KrkrDrawingBitmapInfo {
+    uint32_t width, height, pixel_format, flags;
+    double dpi[2];
+} KrkrDrawingBitmapInfo;
+int krkr_drawing_bitmap_decode(const void *data, size_t length, KrkrDrawingBitmapInfo *info,
     void **rgba, size_t *size);
 int krkr_drawing_bitmap_encode(const void *rgba, size_t length, uint32_t width, uint32_t height,
     const KrkrDrawingEncoder *options, void **bytes, size_t *size);

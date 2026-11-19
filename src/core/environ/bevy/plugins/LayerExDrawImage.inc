@@ -21,6 +21,7 @@ struct Image {
     std::shared_ptr<tTVPBaseTexture> texture;
     std::shared_ptr<DrawRecord> record;
     double dpiX=96,dpiY=96;
+    int pixelFormat=0x26200a,flags=2;
     mutable int status=0;
     Image()=default;
     explicit Image(std::shared_ptr<tTVPBaseTexture> value):texture(std::move(value)) {}
@@ -37,34 +38,27 @@ struct Image {
             if(krkr_layer_ex_record_decode(bytes.data(),bytes.size(),&id)) TVPThrowExceptionMessage(TJS_W("Could not decode metafile image"));
             record=std::make_shared<DrawRecord>(id); texture.reset(); return;
         }
-        if(read==4 && (!std::memcmp(header,"GIF8",4) || !std::memcmp(header,"II*\0",4) ||
+        if(read==4 && ((header[0]==0x89 && !std::memcmp(header+1,"PNG",3)) ||
+                (header[0]==0xff && header[1]==0xd8) || !std::memcmp(header,"BM",2) || !std::memcmp(header,"GIF8",4) || !std::memcmp(header,"II*\0",4) ||
                 !std::memcmp(header,"MM\0*",4) || !std::memcmp(header,"\0\0\1\0",4))) {
             auto length=stream->GetSize();
             if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Drawing image is too large"));
             std::vector<unsigned char> bytes(static_cast<size_t>(length));
             stream->SetPosition(0); stream->ReadBuffer(bytes.data(),bytes.size());
-            unsigned width=0,height=0;
+            KrkrDrawingBitmapInfo info{};
             DrawingBytes pixels;
-            if(krkr_drawing_bitmap_decode(bytes.data(),bytes.size(),&width,&height,&pixels.data,&pixels.size))
+            if(krkr_drawing_bitmap_decode(bytes.data(),bytes.size(),&info,&pixels.data,&pixels.size))
                 TVPThrowExceptionMessage(TJS_W("Could not decode drawing image"));
-            auto value=std::make_shared<tTVPBaseTexture>(width,height);
-            value->Update(pixels.data,width*4,0,0,width,height);
-            texture=std::move(value); record.reset(); dpiX=dpiY=96;
+            auto value=std::make_shared<tTVPBaseTexture>(info.width,info.height);
+            value->Update(pixels.data,info.width*4,0,0,info.width,info.height);
+            texture=std::move(value); record.reset(); dpiX=info.dpi[0]; dpiY=info.dpi[1];
+            pixelFormat=info.pixel_format; flags=info.flags;
             return;
         }
         stream.reset();
         auto value=std::make_shared<tTVPBaseTexture>(1,1);
-        iTJSDispatch2 *metadata=nullptr;
-        TVPLoadGraphic(value.get(),name,TVP_clNone,0,0,glmNormal,nullptr,&metadata);
-        double x=96,y=96;
-        if(metadata) {
-            tTJSVariant info(metadata,metadata); metadata->Release();
-            if(ttstr(member(info,TJS_W("reso_unit")))==TJS_W("meter")) {
-                x=number(info,TJS_W("reso_x"),96/0.0254)*0.0254;
-                y=number(info,TJS_W("reso_y"),96/0.0254)*0.0254;
-            }
-        }
-        dpiX=x; dpiY=y;
+        TVPLoadGraphic(value.get(),name,TVP_clNone,0,0,glmNormal,nullptr,nullptr);
+        dpiX=dpiY=96; pixelFormat=0x26200a; flags=2;
         texture=std::move(value);
         record.reset();
     }
@@ -76,11 +70,11 @@ struct Image {
     }
     unsigned GetWidth() const { return record ? record->info().width : texture ? texture->GetWidth() : 0; }
     unsigned GetHeight() const { return record ? record->info().height : texture ? texture->GetHeight() : 0; }
-    double GetHorizontalResolution() const { return dpiX; }
-    double GetVerticalResolution() const { return dpiY; }
+    double GetHorizontalResolution() const { return record ? record->info().dpi[0] : dpiX; }
+    double GetVerticalResolution() const { return record ? record->info().dpi[1] : dpiY; }
     int GetType() const { return record ? 2 : texture ? 1 : 0; }
-    int GetPixelFormat() const { return 0x26200a; }
-    int GetFlags() const { return texture ? 2 : 0; }
+    int GetPixelFormat() const { return texture ? pixelFormat : 0; }
+    int GetFlags() const { return texture ? flags : record ? 1 : 0; }
     int GetLastStatus() const { int result=status; status=0; return result; }
     tTJSVariant Clone() const {
         if(!texture && !record) return tTJSVariant();
