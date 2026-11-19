@@ -1,11 +1,17 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
-extern FT_Library &TVPGetFontLibrary();
+using FontVisitor=bool (*)(void *,const unsigned char *,size_t,uint32_t);
+struct PositionedGlyph { uint32_t glyph; int32_t xOffset,yOffset,advance; uint32_t character; };
+extern "C" bool krkr_host_font_list(void *,FontVisitor);
+extern "C" bool krkr_host_font_face(const tjs_char *,size_t,uint32_t,void *,FontVisitor);
+extern "C" bool krkr_host_shape_line(const unsigned char *,size_t,uint32_t,const tjs_char *,size_t,PositionedGlyph **,size_t *);
+extern "C" void krkr_host_release_glyphs(PositionedGlyph *,size_t);
 
 struct PrivateFontData {
+    ttstr source;
     std::shared_ptr<std::vector<unsigned char>> bytes;
     long index;
-    int style;
+    int style=0;
     std::vector<ttstr> names;
 };
 
@@ -24,7 +30,9 @@ static std::shared_ptr<PrivateFontData> privateFont(const ttstr &name,int style)
 }
 
 static void addPrivateFont(const ttstr &name) {
+    for(const auto &face : privateFonts()) if(face->source==name) return;
     std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_READ));
+    if(!stream) TVPThrowExceptionMessage(TJS_W("Could not open private font"));
     auto size=stream->GetSize();
     if(size==0 || size>64*1024*1024) TVPThrowExceptionMessage(TJS_W("Invalid private font size"));
     auto bytes=std::make_shared<std::vector<unsigned char>>(static_cast<size_t>(size));
@@ -39,7 +47,7 @@ static void addPrivateFont(const ttstr &name) {
         faceCount=face->num_faces;
         if(faceCount>128) TVPThrowExceptionMessage(TJS_W("Too many private font faces"));
         if(!FT_IS_SCALABLE(face)) continue;
-        auto font=std::make_shared<PrivateFontData>(); font->bytes=bytes; font->index=index;
+        auto font=std::make_shared<PrivateFontData>(); font->source=name; font->bytes=bytes; font->index=index;
         font->style=((face->style_flags&FT_STYLE_FLAG_BOLD)?1:0)|((face->style_flags&FT_STYLE_FLAG_ITALIC)?2:0);
         if(face->family_name) font->names.push_back(ttstr(face->family_name));
         for(unsigned i=0,count=FT_Get_Sfnt_Name_Count(face);i<count;++i) {
@@ -60,39 +68,93 @@ static void addPrivateFont(const ttstr &name) {
 
 struct FontFace {
     std::shared_ptr<PrivateFontData> data;
-    std::unique_ptr<tFreeTypeFace> native;
     FT_Face face=nullptr;
     int style;
-    FontFace(const ttstr &family,double size,int style,std::shared_ptr<PrivateFontData> data={}) :data(std::move(data)),style(style) {
-        if(!this->data) this->data=privateFont(family,style);
-        if(this->data) {
-            if(FT_New_Memory_Face(TVPGetFontLibrary(),this->data->bytes->data(),this->data->bytes->size(),this->data->index,&face))
-                TVPThrowExceptionMessage(TJS_W("Could not create private font face"));
-        } else {
-            auto resolved=TVPFindFont(family) ? family : TVPFontSystem->GetBeingFont(family);
-            native=std::make_unique<tFreeTypeFace>(resolved,0); native->SetHeight(static_cast<int>(size));
-            face=native->GetBaseFace()->GetFTFace();
+    static bool copySystemFace(void *context,const unsigned char *bytes,size_t length,uint32_t index) noexcept {
+        try {
+            auto &data=*static_cast<PrivateFontData*>(context);
+            data.bytes=std::make_shared<std::vector<unsigned char>>(bytes,bytes+length);
+            data.index=index;
+            return true;
+        } catch(...) { return false; }
+    }
+    FontFace(const ttstr &family,double size,int style,std::shared_ptr<PrivateFontData> source={})
+        :data(source ? source : privateFont(family,style)),style(style) {
+        if(!data) {
+            data=std::make_shared<PrivateFontData>();
+            auto registered=TVPFindFont(family);
+            if(registered || !krkr_host_font_face(family.c_str(),family.GetLen(),style,data.get(),copySystemFace)) {
+                ttstr name=registered ? family : TVPFontSystem->GetBeingFont(family);
+                auto info=TVPFindFont(name);
+                std::unique_ptr<tTJSBinaryStream> stream(TVPCreateFontStream(name));
+                if(!stream || stream->GetSize()>INT_MAX) TVPThrowExceptionMessage(TJS_W("Could not open font"));
+                data->bytes=std::make_shared<std::vector<unsigned char>>(stream->GetSize());
+                stream->ReadBuffer(data->bytes->data(),data->bytes->size());
+                data->index=info ? info->Index : 0;
+            }
         }
-        if(FT_Set_Char_Size(face,0,static_cast<FT_F26Dot6>(std::round(size*64)),72,72)) {
-            if(this->data) FT_Done_Face(face);
+        if(FT_New_Memory_Face(TVPGetFontLibrary(),data->bytes->data(),data->bytes->size(),data->index,&face))
+            TVPThrowExceptionMessage(TJS_W("Could not create font face"));
+        if(!FT_IS_SCALABLE(face) || !face->units_per_EM ||
+           FT_Set_Char_Size(face,0,static_cast<FT_F26Dot6>(std::max(1.0,std::round(size*64))),72,72)) {
+            FT_Done_Face(face);
             face=nullptr; TVPThrowExceptionMessage(TJS_W("Could not set font size"));
         }
     }
-    ~FontFace() { if(data && face) FT_Done_Face(face); }
-    int ascent() const { return static_cast<int>(face->ascender*face->size->metrics.y_ppem/face->units_per_EM); }
-    void underline(int &position,int &thickness) const {
-        auto ppem=face->size->metrics.y_ppem; auto units=face->units_per_EM;
-        position=(face->ascender-face->underline_position)*ppem/units;
-        thickness=std::max(1,int(face->underline_thickness*ppem/units));
+    ~FontFace() { if(face) FT_Done_Face(face); }
+    FontFace(const FontFace&)=delete;
+    FontFace &operator=(const FontFace&)=delete;
+    double scale(double units) const { return FT_MulFix(FT_Long(units),face->size->metrics.y_scale)/64.0; }
+    double ascent() const { return scale(face->ascender); }
+    double descent() const { return scale(-face->descender); }
+    double lineSpacing() const { return ascent()+descent(); }
+    double ascentLeading() const {
+        auto os2=static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face,ft_sfnt_os2));
+        if(os2 && os2->sTypoAscender>0) return ascent()-scale(os2->sTypoAscender);
+        return (lineSpacing()-scale(face->units_per_EM))*ascent()/lineSpacing();
     }
-    void strikeout(int &position,int &thickness) const {
-        position=face->ascender*7*face->size->metrics.y_ppem/(10*face->units_per_EM);
-        thickness=std::max(1,int(face->underline_thickness*face->size->metrics.y_ppem/face->units_per_EM));
+    void underline(double &position,double &thickness) const {
+        position=ascent()-scale(face->underline_position);
+        thickness=std::max(1.0,scale(face->underline_thickness));
     }
-    unsigned defaultChar() const { return native ? native->GetDefaultChar() : '?'; }
+    void strikeout(double &position,double &thickness) const {
+        auto os2=static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face,ft_sfnt_os2));
+        position=ascent()-(os2 ? scale(os2->yStrikeoutPosition) : ascent()/3);
+        thickness=std::max(1.0,scale(os2 ? os2->yStrikeoutSize : face->underline_thickness));
+    }
     void load(unsigned glyph,int flags) const {
         if(FT_Load_Glyph(face,glyph,flags)) TVPThrowExceptionMessage(TJS_W("Could not load glyph outline"));
         if((style&1) && !(face->style_flags&FT_STYLE_FLAG_BOLD)) FT_GlyphSlot_Embolden(face->glyph);
         if((style&2) && !(face->style_flags&FT_STYLE_FLAG_ITALIC)) FT_GlyphSlot_Oblique(face->glyph);
     }
+};
+
+struct Font {
+    ttstr family;
+    double size;
+    int style;
+    bool forceSelfPathDraw=false;
+    mutable std::shared_ptr<FontFace> cached;
+
+    Font(ttstr name,double emSize,int flags):family(name),size(emSize),style(flags) { setSize(emSize); }
+    const FontFace &face() const {
+        if(!cached) cached=std::make_shared<FontFace>(family,size,style);
+        return *cached;
+    }
+    ttstr getFamily() const { return family; }
+    void setFamily(ttstr value) { family=value; cached.reset(); }
+    double getSize() const { return size; }
+    void setSize(double value) {
+        if(!std::isfinite(value) || value<=0 || value>4096) TVPThrowExceptionMessage(TJS_W("Invalid font size"));
+        size=value; cached.reset();
+    }
+    int getStyle() const { return style; }
+    void setStyle(int value) { style=value; cached.reset(); }
+    bool getForceSelfPathDraw() const { return forceSelfPathDraw; }
+    void setForceSelfPathDraw(bool value) { forceSelfPathDraw=value; }
+    double ascent() const { return face().ascent(); }
+    double descent() const { return face().descent(); }
+    double spacing() const { return face().lineSpacing(); }
+    double ascentLeading() const { return face().ascentLeading(); }
+    double descentLeading() const { return spacing()-size-ascentLeading(); }
 };

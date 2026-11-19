@@ -119,6 +119,14 @@ size_t krkr_png_decode(const void *src, size_t srcLen, int target, int key,
 int krkr_png_encode(const void *pixels, size_t pixelsLen, unsigned width,
 	unsigned height, int bpp, void **png, size_t *pngLen);
 void krkr_png_free(void *png, size_t pngLen);
+typedef struct KrkrDrawingEncoder {
+    uint32_t format;
+    int32_t depth, compression, scan, version, render, quality;
+} KrkrDrawingEncoder;
+int krkr_drawing_bitmap_decode(const void *data, size_t length, uint32_t *width, uint32_t *height,
+    void **rgba, size_t *size);
+int krkr_drawing_bitmap_encode(const void *rgba, size_t length, uint32_t width, uint32_t height,
+    const KrkrDrawingEncoder *options, void **bytes, size_t *size);
 
 // Complete image exports. format: 0 RGBA PNG, 1 RGBA TLG5, 2 indexed Province PNG.
 typedef struct KrkrSaveOptions {

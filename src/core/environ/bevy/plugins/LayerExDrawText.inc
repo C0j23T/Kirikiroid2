@@ -22,49 +22,77 @@ struct TextOutline {
         auto &self=*static_cast<TextOutline*>(user);
         self.path.cubic(self.convert(*a),self.convert(*b),self.convert(*to)); return 0;
     }
+    GeometryRect layout{},internal{};
     TextOutline(const Font &font,const ttstr &text,double x,double y,int hint) {
-        tFreeTypeFace holder(font.resolvedFamily(),font.native().Flags);
-        holder.SetHeight(static_cast<int>(font.size));
-        auto face=holder.GetBaseFace()->GetFTFace();
-        if(FT_Set_Char_Size(face,0,static_cast<FT_F26Dot6>(std::round(font.size*64)),72,72))
-            TVPThrowExceptionMessage(TJS_W("Could not set font size"));
-        originX=x; originY=y+holder.GetAscent(); lineHeight=face->size->metrics.height/64.0;
+        const auto &holder=font.face();
+        lineHeight=holder.lineSpacing();
+        double margin=font.forceSelfPathDraw ? std::floor(0.167*font.size) : font.size/6;
+        double left=x+margin-(font.forceSelfPathDraw ? 0.5 : 0);
+        double top=y-(font.forceSelfPathDraw ? 0.5 : 0);
         FT_Int32 loadFlags=FT_LOAD_NO_BITMAP;
         if(hint==2 || hint==4) loadFlags|=FT_LOAD_NO_HINTING|FT_LOAD_NO_AUTOHINT;
         if(hint==1 || hint==2) loadFlags|=FT_LOAD_TARGET_MONO;
-        FT_Outline_Funcs funcs{move,line,conic,cubic,0,0};
-        auto characters=text.c_str();
-        double lineStart=x,maxAdvance=0,firstLineY=y;
-        for(int i=0;i<text.GetLen();++i) {
-            unsigned code=characters[i];
-            if(code>=0xd800 && code<=0xdbff && i+1<text.GetLen() && characters[i+1]>=0xdc00 && characters[i+1]<=0xdfff)
-                code=0x10000+((code-0xd800)<<10)+(characters[++i]-0xdc00);
-            if(code=='\r') continue;
-            if(code=='\n') {
-                decorate(font,holder,lineStart,y,originX-lineStart);
-                originX=x; y+=lineHeight; originY=y+holder.GetAscent(); continue;
+        const FT_Outline_Funcs funcs{move,line,conic,cubic,0,0};
+        int length=text.GetLen(), lines=0;
+        for(int start=0;start<length;) {
+            int end=start;
+            while(end<length && text[end]!='\r' && text[end]!='\n') ++end;
+            double baseline=top+lines*lineHeight+holder.ascent();
+            double pen=left;
+            if(end>start) {
+                PositionedGlyph *glyphs=nullptr;
+                size_t count=0;
+                if(!krkr_host_shape_line(holder.data->bytes->data(),holder.data->bytes->size(),holder.data->index,
+                    text.c_str()+start,end-start,&glyphs,&count))
+                    TVPThrowExceptionMessage(TJS_W("Could not shape text"));
+                auto cleanup=[count](PositionedGlyph *p){krkr_host_release_glyphs(p,count);};
+                std::unique_ptr<PositionedGlyph,decltype(cleanup)> guard(glyphs,cleanup);
+                for(size_t i=0;i<count;++i) {
+                    auto &g=glyphs[i];
+                    originX=pen+holder.scale(g.xOffset);
+                    originY=baseline-holder.scale(g.yOffset);
+                    holder.load(g.glyph,loadFlags);
+                    auto slot=holder.face->glyph;
+                    if(slot->format==FT_GLYPH_FORMAT_OUTLINE && slot->outline.n_points) {
+                        if(FT_Outline_Decompose(&slot->outline,&funcs,this))
+                            TVPThrowExceptionMessage(TJS_W("Could not decompose glyph outline"));
+                        path.closeFigure();
+                    }
+                    pen+=holder.scale(g.advance);
+                }
             }
-            auto glyph=FT_Get_Char_Index(face,code);
-            if(!glyph) glyph=FT_Get_Char_Index(face,holder.GetDefaultChar());
-            if(FT_Load_Glyph(face,glyph,loadFlags)) TVPThrowExceptionMessage(TJS_W("Could not load glyph outline"));
-            if(font.style&1) FT_GlyphSlot_Embolden(face->glyph);
-            if(font.style&2) FT_GlyphSlot_Oblique(face->glyph);
-            if(face->glyph->format==FT_GLYPH_FORMAT_OUTLINE && face->glyph->outline.n_points) {
-                if(FT_Outline_Decompose(&face->glyph->outline,&funcs,this)) TVPThrowExceptionMessage(TJS_W("Could not decompose glyph outline"));
-                path.closeFigure();
-            }
-            originX+=face->glyph->advance.x/64.0;
-            maxAdvance=std::max(maxAdvance,originX-x);
+            double width=pen-left;
+            decorate(font,holder,left,top+lines*lineHeight,width);
+            advance=std::max(advance,width);
+            ++lines;
+            if(end==length) break;
+            if(text[end]=='\r' && end+1<length && text[end+1]=='\n') ++end;
+            start=end+1;
         }
-        decorate(font,holder,lineStart,y,originX-lineStart); advance=maxAdvance; height=y+lineHeight-firstLineY;
         bounds=path.bounds();
+        height=lineHeight*lines;
+        if(font.forceSelfPathDraw) {
+            layout={x,y,bounds.width+0.334*font.size,lineHeight*1.124};
+            internal={x+margin,y,bounds.width,lineHeight};
+        } else if(lines>0) {
+            layout={x,y,advance+2*margin,height};
+            internal={left,y,advance,height};
+        }
     }
-    void decorate(const Font &font,const tFreeTypeFace &holder,double x,double y,double width) {
-        int position=0,thickness=0;
-        if(font.style&4) { holder.GetUnderline(position,thickness); path.addRectangle({x,y+position,width,double(thickness)}); }
-        if(font.style&8) { holder.GetStrikeOut(position,thickness); path.addRectangle({x,y+position,width,double(thickness)}); }
+    void decorate(const Font &font,const FontFace &holder,double x,double y,double width) {
+        if(width<=0) return;
+        double position=0,thickness=0;
+        if(font.style&4) { holder.underline(position,thickness); path.addRectangle({x,y+position,width,thickness}); }
+        if(font.style&8) { holder.strikeout(position,thickness); path.addRectangle({x,y+position,width,thickness}); }
     }
 };
+
+static GeometryRect transformTextRect(GeometryRect r,const BevyDrawGeometry::Matrix &matrix) {
+    auto a=matrix.apply({r.x,r.y}), b=matrix.apply({r.right(),r.y});
+    auto c=matrix.apply({r.x,r.bottom()}), d=matrix.apply({r.right(),r.bottom()});
+    double left=std::min({a.x,b.x,c.x,d.x}), top=std::min({a.y,b.y,c.y,d.y});
+    return {left,top,std::max({a.x,b.x,c.x,d.x})-left,std::max({a.y,b.y,c.y,d.y})-top};
+}
 
 template<bool Outline> static tjs_error TJS_INTF_METHOD textOperation(tTJSVariant *result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *obj) {
     if(count<5) return TJS_E_BADPARAMCOUNT;
@@ -72,15 +100,27 @@ template<bool Outline> static tjs_error TJS_INTF_METHOD textOperation(tTJSVarian
     auto font=ncbInstanceAdaptor<Font>::GetNativeInstance(p[0]->AsObjectNoAddRef());
     auto app=ncbInstanceAdaptor<Appearance>::GetNativeInstance(p[1]->AsObjectNoAddRef());
     if(!font || !app) return TJS_E_INVALIDPARAM;
-    tTJSNI_BaseLayer *layer=nullptr;
-    if(!obj || TJS_FAILED(obj->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,reinterpret_cast<iTJSNativeInstance**>(&layer))) || !layer || !layer->GetMainImage()) return TJS_E_INVALIDPARAM;
+    auto layer=drawingLayer(obj);
     auto state=DrawState::get(obj);
     TextOutline text(*font,ttstr(*p[4]),coordinate(*p[2]),coordinate(*p[3]),state->textRenderingHint);
-    int aliasing=state->textRenderingHint==1 || state->textRenderingHint==2;
-    if constexpr(Outline) return drawPath(result,obj,layer,text.path,*app,aliasing);
-    else {
-        Appearance brushes;
-        for(const auto &paint:app->paints) if(!paint.pen) { brushes.paints.push_back(paint); break; }
-        return drawPath(result,obj,layer,text.path,brushes,aliasing);
+    if(Outline || font->forceSelfPathDraw) {
+        auto status=drawPath(result,obj,layer,text.path,*app);
+        if(result && font->forceSelfPathDraw) {
+            auto width=number(*result,TJS_W("width"),0)+0.334*font->size;
+            *result=rect(text.layout.x,text.layout.y,width,text.layout.height);
+        }
+        return status;
     }
+    Appearance brushes;
+    for(const auto &paint:app->paints) if(!paint.pen) { brushes.paints.push_back(paint); break; }
+    int aliasing=state->textRenderingHint==1 || state->textRenderingHint==2;
+    auto status=drawPath(result,obj,layer,text.path,brushes,aliasing);
+    if(result && !brushes.paints.empty() && text.layout.height>0) {
+        auto r=text.layout;
+        r.x+=brushes.paints[0].ox;
+        r.y+=brushes.paints[0].oy;
+        r=transformTextRect(r,BevyDrawGeometry::Matrix::product(state->transform,state->viewTransform));
+        *result=rect(r.x,r.y,r.width,r.height);
+    }
+    return status;
 }

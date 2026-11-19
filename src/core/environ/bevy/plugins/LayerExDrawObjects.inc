@@ -113,9 +113,23 @@ struct Matrix : BevyDrawGeometry::Matrix {
         return result;
     }
     static tjs_error TJS_INTF_METHOD create(Matrix **result,tjs_int count,tTJSVariant **p,iTJSDispatch2 *) {
-        if(count!=0 && count!=6) return TJS_E_BADPARAMCOUNT;
         Matrix value;
-        for(int i=0;i<count;++i) value.elements[i]=coordinate(*p[i]);
+        if(count==2) {
+            auto r=rectValue(*p[0]);
+            auto points=pointValues(*p[1]);
+            if(points.size()!=3 || !r.width || !r.height) return TJS_E_INVALIDPARAM;
+            auto &e=value.elements;
+            e[0]=(points[1].x-points[0].x)/r.width;
+            e[1]=(points[1].y-points[0].y)/r.width;
+            e[2]=(points[2].x-points[0].x)/r.height;
+            e[3]=(points[2].y-points[0].y)/r.height;
+            e[4]=points[0].x-r.x*e[0]-r.y*e[2];
+            e[5]=points[0].y-r.x*e[1]-r.y*e[3];
+            if(!finite(e)) return TJS_E_INVALIDPARAM;
+        } else {
+            if(count!=0 && count!=6) return TJS_E_BADPARAMCOUNT;
+            for(int i=0;i<count;++i) value.elements[i]=coordinate(*p[i]);
+        }
         *result=new Matrix(value); return TJS_S_OK;
     }
     double OffsetX() const { return elements[4]; } double OffsetY() const { return elements[5]; }

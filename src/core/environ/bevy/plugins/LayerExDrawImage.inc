@@ -1,5 +1,11 @@
 // LayerExDraw interface by Go Watanabe; see LICENSE-THIRD-PARTY.md.
 
+struct DrawingBytes {
+    void *data=nullptr;
+    size_t size=0;
+    ~DrawingBytes() { krkr_png_free(data,size); }
+};
+
 struct DrawRecord {
     uint64_t id;
     explicit DrawRecord(uint64_t id):id(id) {}
@@ -22,13 +28,29 @@ struct Image {
     void load(ttstr name) {
         std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(name,TJS_BS_READ));
         unsigned char header[4]{};
-        if(stream->Read(header,4)==4 && header[0]==1 && header[1]==0 && header[2]==0 && header[3]==0) {
+        auto read=stream->Read(header,4);
+        if(read==4 && header[0]==1 && header[1]==0 && header[2]==0 && header[3]==0) {
             auto length=stream->GetSize();
             if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Metafile is too large"));
             stream->SetPosition(0); std::vector<unsigned char> bytes(static_cast<size_t>(length)); stream->ReadBuffer(bytes.data(),bytes.size());
             uint64_t id=0;
             if(krkr_layer_ex_record_decode(bytes.data(),bytes.size(),&id)) TVPThrowExceptionMessage(TJS_W("Could not decode metafile image"));
             record=std::make_shared<DrawRecord>(id); texture.reset(); return;
+        }
+        if(read==4 && (!std::memcmp(header,"GIF8",4) || !std::memcmp(header,"II*\0",4) ||
+                !std::memcmp(header,"MM\0*",4) || !std::memcmp(header,"\0\0\1\0",4))) {
+            auto length=stream->GetSize();
+            if(length>256*1024*1024) TVPThrowExceptionMessage(TJS_W("Drawing image is too large"));
+            std::vector<unsigned char> bytes(static_cast<size_t>(length));
+            stream->SetPosition(0); stream->ReadBuffer(bytes.data(),bytes.size());
+            unsigned width=0,height=0;
+            DrawingBytes pixels;
+            if(krkr_drawing_bitmap_decode(bytes.data(),bytes.size(),&width,&height,&pixels.data,&pixels.size))
+                TVPThrowExceptionMessage(TJS_W("Could not decode drawing image"));
+            auto value=std::make_shared<tTVPBaseTexture>(width,height);
+            value->Update(pixels.data,width*4,0,0,width,height);
+            texture=std::move(value); record.reset(); dpiX=dpiY=96;
+            return;
         }
         stream.reset();
         auto value=std::make_shared<tTVPBaseTexture>(1,1);
@@ -61,6 +83,7 @@ struct Image {
     int GetFlags() const { return texture ? 2 : 0; }
     int GetLastStatus() const { int result=status; status=0; return result; }
     tTJSVariant Clone() const {
+        if(!texture && !record) return tTJSVariant();
         auto copy=new Image(*this); if(texture) copy->texture=std::make_shared<tTVPBaseTexture>(*texture);
         if(record) {
             uint64_t id=0;
@@ -69,15 +92,32 @@ struct Image {
         }
         return boxed(copy);
     }
-    tTJSVariant GetBounds() const { return boxed(new Rect(0,0,GetWidth(),GetHeight())); }
+    tTJSVariant GetBounds() const {
+        if(record) {
+            auto info=record->info();
+            return boxed(new Rect(info.bounds[0],info.bounds[1],info.bounds[2],info.bounds[3]));
+        }
+        return texture ? boxed(new Rect(0,0,GetWidth(),GetHeight())) : tTJSVariant();
+    }
+    std::shared_ptr<tTVPBaseTexture> bitmap() const {
+        if(texture) return texture;
+        if(!record) TVPThrowExceptionMessage(TJS_W("Image is empty"));
+        auto info=record->info();
+        auto output=std::make_shared<tTVPBaseTexture>(info.width,info.height);
+        int32_t clip[]={0,0,int32_t(info.width),int32_t(info.height)};
+        Matrix view; view.translate(-info.bounds[0],-info.bounds[1],1);
+        if(krkr_layer_ex_record_replay(record->id,TVPBevyTextureID(output->GetTexture()),clip,view.elements.data(),0))
+            TVPThrowExceptionMessage(TJS_W("Could not rasterize metafile texture"));
+        return output;
+    }
     static std::shared_ptr<tTVPBaseTexture> read(const tTJSVariant &value) {
         if(value.Type()==tvtString) {
-            Image image; image.load(ttstr(value)); return image.texture;
+            Image image; image.load(ttstr(value)); return image.bitmap();
         }
         if(value.Type()==tvtObject) {
             auto object=value.AsObjectNoAddRef();
             auto image=ncbInstanceAdaptor<Image>::GetNativeInstance(object);
-            if(image && image->texture) return image->texture;
+            if(image) return image->bitmap();
             tTJSNI_BaseLayer *layer=nullptr;
             if(object && TJS_SUCCEEDED(object->NativeInstanceSupport(TJS_NIS_GETINSTANCE,tTJSNC_Layer::ClassID,reinterpret_cast<iTJSNativeInstance**>(&layer))) && layer && layer->GetMainImage())
                 return std::make_shared<tTVPBaseTexture>(*layer->GetMainImage());

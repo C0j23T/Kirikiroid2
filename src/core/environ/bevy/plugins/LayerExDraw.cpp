@@ -7,24 +7,30 @@
 #include "FreeTypeFace.h"
 #include FT_OUTLINE_H
 #include FT_SYNTHESIS_H
+#include FT_TRUETYPE_IDS_H
+#include FT_TRUETYPE_TABLES_H
+#include FT_SFNT_NAMES_H
 #include "FontSystem.h"
 #include "FontImpl.h"
 #include "GraphicsLoaderIntf.h"
 #include "BevyRender.h"
 #include "BevyLayerExDraw.h"
+#include "krkr_shim.h"
+#include <cstring>
 #include "LayerExDrawGeometry.h"
 #include <cmath>
 #include <algorithm>
 #include <vector>
 #include <memory>
 
+extern FT_Library &TVPGetFontLibrary();
 extern FontSystem *TVPFontSystem;
 extern void TVPGetAllFontList(std::vector<ttstr>& list);
 
 namespace BevyDraw {
 static tTJSVariant member(const tTJSVariant &v,const tjs_char *key) {
     tTJSVariant out;
-    if(v.Type()==tvtObject) v.AsObjectNoAddRef()->PropGet(0,key,nullptr,&out,v.AsObjectNoAddRef());
+    if(v.Type()==tvtObject && v.AsObjectNoAddRef()) v.AsObjectNoAddRef()->PropGet(0,key,nullptr,&out,v.AsObjectNoAddRef());
     return out;
 }
 static double number(const tTJSVariant &v,const tjs_char *key,double fallback) {
@@ -32,29 +38,7 @@ static double number(const tTJSVariant &v,const tjs_char *key,double fallback) {
 }
 #include "LayerExDrawObjects.inc"
 #include "LayerExDrawImage.inc"
-struct Font {
-    ttstr family; double size; int style; bool forceSelfPathDraw=false;
-    Font(ttstr family,double size,int style):family(family),size(size),style(style) { validate(); }
-    void validate() { if(!std::isfinite(size) || size<1 || size>4096) TVPThrowExceptionMessage(TJS_W("Invalid font size")); }
-    ttstr getFamily() const { return family; } void setFamily(ttstr v) { family=v; }
-    double getSize() const { return size; } void setSize(double v) { auto old=size; size=v; try { validate(); } catch(...) { size=old; throw; } }
-    int getStyle() const { return style; } void setStyle(int v) { style=v; }
-    bool getForceSelfPathDraw() const { return forceSelfPathDraw; }
-    void setForceSelfPathDraw(bool value) { forceSelfPathDraw=value; }
-    ttstr resolvedFamily() const { return TVPFindFont(family) ? family : TVPFontSystem->GetBeingFont(family); }
-    tTVPFont native() const { return { -int(size), tjs_uint32(((style&1)?TVP_TF_BOLD:0)|((style&2)?TVP_TF_ITALIC:0)|((style&4)?TVP_TF_UNDERLINE:0)|((style&8)?TVP_TF_STRIKEOUT:0)),0,family}; }
-    double metric(int kind) const {
-        tFreeTypeFace face(resolvedFamily(),native().Flags);
-        face.SetHeight(int(size));
-        auto metrics=face.GetBaseFace()->GetFTFace()->size->metrics;
-        return double(kind==0 ? metrics.ascender : kind==1 ? -metrics.descender : metrics.height)/64.;
-    }
-    double ascent() const { return metric(0); }
-    double descent() const { return metric(1); }
-    double spacing() const { return metric(2); }
-    double ascentLeading() const { return std::max(0.0, (spacing()-ascent()-descent())/2.0); }
-    double descentLeading() const { return std::max(0.0, spacing()-ascent()-descent()-ascentLeading()); }
-};
+#include "LayerExDrawFont.inc"
 struct Paint {
     tjs_uint32 a,b;
     double x1=0,y1=0,x2=1,y2=0,width=0,ox=0,oy=0;
@@ -148,24 +132,38 @@ struct Appearance {
                     auto rect=rectValue(r); double x=rect.x,y=rect.y,w=rect.width,h=rect.height;
                     p.tile={x,y,w,h};
                     auto specifiedAngle=member(color,TJS_W("angle"));
+                    if(w<=0 || h<=0) TVPThrowExceptionMessage(TJS_W("Gradient rectangle must have positive dimensions"));
+                    double angle;
+                    bool scalable;
                     if(specifiedAngle.Type()==tvtVoid) {
                         int mode=number(color,TJS_W("mode"),0);
                         if(mode<0 || mode>3) TVPThrowExceptionMessage(TJS_W("Invalid gradient mode"));
-                        p.x1=x+(mode==3 ? w : 0); p.y1=y;
-                        p.x2=x+(mode==1 ? 0 : mode==3 ? 0 : w); p.y2=y+(mode==0 ? 0 : h);
+                        constexpr double angles[]={0,90,45,135};
+                        angle=angles[mode];
+                        scalable=true;
                     } else {
-                        double angle=coordinate(specifiedAngle);
-                        double radians=angle*0.017453292519943295;
-                        double dx=std::cos(radians),dy=std::sin(radians),extent=std::abs(dx*w)+std::abs(dy*h);
-                        double cx=x+w/2,cy=y+h/2;
-                        p.x1=cx-dx*extent/2; p.y1=cy-dy*extent/2; p.x2=cx+dx*extent/2; p.y2=cy+dy*extent/2;
+                        angle=coordinate(specifiedAngle);
+                        scalable=number(color,TJS_W("isAngleScalable"),0)!=0;
                     }
+                    double radians=angle*0.017453292519943295;
+                    double dx=std::cos(radians),dy=std::sin(radians);
+                    if(scalable) {
+                        dx/=w; dy/=h;
+                        double norm=std::hypot(dx,dy);
+                        dx/=norm; dy/=norm;
+                    }
+                    double extent=std::abs(dx*w)+std::abs(dy*h);
+                    double cx=x+w/2,cy=y+h/2;
+                    p.x1=cx-dx*extent/2; p.y1=cy-dy*extent/2;
+                    p.x2=cx+dx*extent/2; p.y2=cy+dy*extent/2;
                 } else TVPThrowExceptionMessage(TJS_W("Linear gradient requires points or rect"));
                 if(p.tile[2]==0 || p.tile[3]==0) p.tile={std::min(p.x1,p.x2),std::min(p.y1,p.y2),std::abs(p.x2-p.x1),std::abs(p.y2-p.y1)};
                 p.wrap=number(color,TJS_W("wrapMode"),0);
                 if(p.wrap<0 || p.wrap>4) TVPThrowExceptionMessage(TJS_W("Invalid gradient wrap mode"));
-                auto transform=member(color,TJS_W("transform"));
-                if(transform.Type()!=tvtVoid) p.matrix=Matrix::read(transform);
+            } else TVPThrowExceptionMessage(TJS_W("Unsupported brush type"));
+            if(type==3 || type==4) {
+                auto transform=member(color,TJS_W("transform")); if(transform.Type()!=tvtVoid) p.matrix=Matrix::read(transform);
+                p.brushFlags=number(color,TJS_W("useGammaCorrection"),number(color,TJS_W("gammaCorrection"),0))!=0;
                 auto interpolation=member(color,TJS_W("interpolationColors"));
                 if(interpolation.Type()==tvtObject) {
                     auto colors=member(interpolation,TJS_W("presetColors"));
@@ -182,10 +180,6 @@ struct Appearance {
                     }
                     if(p.stops.front().position!=0 || p.stops.back().position!=1) TVPThrowExceptionMessage(TJS_W("Gradient stops must span zero to one"));
                 }
-            } else TVPThrowExceptionMessage(TJS_W("Unsupported brush type"));
-            if(type==3 || type==4) {
-                auto transform=member(color,TJS_W("transform")); if(transform.Type()!=tvtVoid) p.matrix=Matrix::read(transform);
-                p.brushFlags=number(color,TJS_W("useGammaCorrection"),0)!=0;
                 auto blend=member(color,TJS_W("blend"));
                 if(blend.Type()!=tvtVoid) {
                     auto factors=member(blend,TJS_W("blendFactors")),positions=member(blend,TJS_W("blendPositions"));
@@ -269,29 +263,37 @@ struct Appearance {
     }
 };
 struct GdiPlus {
-    static std::vector<ttstr> &privateFonts() { static std::vector<ttstr> names; return names; }
     static tjs_error TJS_INTF_METHOD getFontList(tTJSVariant *result,tjs_int count,tTJSVariant **params,iTJSDispatch2 *) {
-        bool privateOnly=count>0 && params[0]->AsInteger()!=0;
-        auto array=TJSCreateArrayObject();
-        {
-            std::vector<ttstr> names=privateFonts();
-            if(!privateOnly) { names.clear(); TVPGetAllFontList(names); }
-            for(const auto &name:names) {
-                tTJSVariant value(name), *param=&value;
-                array->FuncCall(0,TJS_W("add"),nullptr,0,1,&param,array);
-            }
+        if(!result) return TJS_S_OK;
+        std::vector<ttstr> names;
+        for(const auto &face : privateFonts()) {
+            const auto &family=face->names.front();
+            if(std::find(names.begin(),names.end(),family)==names.end()) names.push_back(family);
         }
-        *result=tTJSVariant(array,array); array->Release(); return TJS_S_OK;
+        if(count==0 || !params[0]->AsInteger()) {
+            TVPInitFontNames();
+            TVPGetAllFontList(names);
+            if(!krkr_host_font_list(&names,[](void *context,const unsigned char *name,size_t length,uint32_t) noexcept {
+                try {
+                    static_cast<std::vector<ttstr>*>(context)->emplace_back(std::string(reinterpret_cast<const char*>(name),length).c_str());
+                    return true;
+                } catch(...) { return false; }
+            })) TVPThrowExceptionMessage(TJS_W("Could not enumerate system fonts"));
+            std::sort(names.begin(),names.end());
+            names.erase(std::unique(names.begin(),names.end()),names.end());
+        }
+        auto array=TJSCreateArrayObject();
+        *result=tTJSVariant(array,array);
+        array->Release();
+        for(const auto &name : names) {
+            tTJSVariant item(name), *param=&item;
+            array->FuncCall(0,TJS_W("add"),nullptr,nullptr,1,&param,array);
+        }
+        return TJS_S_OK;
     }
     static tjs_error TJS_INTF_METHOD addPrivateFont(tTJSVariant *,tjs_int count,tTJSVariant **p,iTJSDispatch2 *) {
         if(count<1) return TJS_E_BADPARAMCOUNT;
-        ttstr name=TVPGetPlacedPath(ttstr(*p[0]));
-        if(name.IsEmpty() || !TVPEnumFontsProc(name)) TVPThrowExceptionMessage(TJS_W("Could not register private font"));
-        auto last=TVPFontNames.GetLast();
-        for(auto it=TVPFontNames.GetFirst();it!=last;++it) if(it.GetValue().Path==name) {
-            auto family=it.GetKey();
-            auto &names=privateFonts(); if(std::find(names.begin(),names.end(),family)==names.end()) names.push_back(family);
-        }
+        BevyDraw::addPrivateFont(TVPGetPlacedPath(ttstr(*p[0])));
         return TJS_S_OK;
     }
 };
@@ -333,8 +335,8 @@ struct Layer {
         if(!font) return TJS_E_INVALIDPARAM;
         ttstr text=*p[1];
         TextOutline outline(*font,text,0,0,DrawState::get(obj)->textRenderingHint);
-        auto bounds=outline.bounds;
-        if(result) *result=internal ? rect(bounds.x,bounds.y,bounds.width,bounds.height) : rect(0,0,outline.advance,outline.height);
+        auto bounds=internal ? outline.internal : outline.layout;
+        if(result) *result=rect(bounds.x,bounds.y,bounds.width,bounds.height);
         return TJS_S_OK;
     }
     static tjs_error TJS_INTF_METHOD measure(tTJSVariant *r,tjs_int n,tTJSVariant **p,iTJSDispatch2 *obj) { return measureText(r,n,p,obj,false); }
@@ -403,6 +405,22 @@ NCB_REGISTER_CLASS_DIFFER(GdiPlus,BevyGdiPlus) {
     Variant(TJS_W("FontStyleUnderline"),tTJSVariant(4)); Variant(TJS_W("FontStyleStrikeout"),tTJSVariant(8)); Variant(TJS_W("BrushTypeSolidColor"),tTJSVariant(0)); Variant(TJS_W("BrushTypeLinearGradient"),tTJSVariant(4));
 }
 NCB_ATTACH_CLASS(BevyDrawLayer,Layer) {
+    Variant(TJS_W("EncoderValueCompressionLZW"),tTJSVariant(2));
+    Variant(TJS_W("EncoderValueCompressionCCITT3"),tTJSVariant(3));
+    Variant(TJS_W("EncoderValueCompressionCCITT4"),tTJSVariant(4));
+    Variant(TJS_W("EncoderValueCompressionRle"),tTJSVariant(5));
+    Variant(TJS_W("EncoderValueCompressionNone"),tTJSVariant(6));
+    Variant(TJS_W("EncoderValueScanMethodInterlaced"),tTJSVariant(7));
+    Variant(TJS_W("EncoderValueScanMethodNonInterlaced"),tTJSVariant(8));
+    Variant(TJS_W("EncoderValueVersionGif87"),tTJSVariant(9));
+    Variant(TJS_W("EncoderValueVersionGif89"),tTJSVariant(10));
+    Variant(TJS_W("EncoderValueRenderProgressive"),tTJSVariant(11));
+    Variant(TJS_W("EncoderValueRenderNonProgressive"),tTJSVariant(12));
+    Variant(TJS_W("EncoderValueTransformRotate90"),tTJSVariant(13));
+    Variant(TJS_W("EncoderValueTransformRotate180"),tTJSVariant(14));
+    Variant(TJS_W("EncoderValueTransformRotate270"),tTJSVariant(15));
+    Variant(TJS_W("EncoderValueTransformFlipHorizontal"),tTJSVariant(16));
+    Variant(TJS_W("EncoderValueTransformFlipVertical"),tTJSVariant(17));
     RawCallback("clear",BevyDraw::Layer::clear,0);
     RawCallback("drawPath",BevyDraw::shapeOperation<0>,0);
     RawCallback("drawRectangle",BevyDraw::shapeOperation<1>,0); RawCallback("drawEllipse",BevyDraw::shapeOperation<2>,0);
@@ -432,3 +450,6 @@ NCB_ATTACH_CLASS_WITH_HOOK(BevyDrawState,Layer) {
     NCB_PROPERTY(record,getRecord,setRecord); NCB_METHOD(redrawRecord); NCB_METHOD(getRecordImage);
     NCB_METHOD(saveRecord); NCB_METHOD(loadRecord);
 }
+
+static void clearLayerExDrawFonts() { BevyDraw::privateFonts().clear(); }
+NCB_POST_UNREGIST_CALLBACK(clearLayerExDrawFonts);

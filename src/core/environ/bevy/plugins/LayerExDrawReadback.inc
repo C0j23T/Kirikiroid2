@@ -5,13 +5,38 @@ struct Readback {
         if(count<1) return TJS_E_BADPARAMCOUNT;
         auto image=drawingLayer(obj)->GetMainImage();
         ttstr mime=count>1 ? ttstr(*p[1]) : ttstr(TJS_W("image/bmp"));
-        if(mime!=TJS_W("image/bmp") && mime!=TJS_W("image/png") && mime!=TJS_W("image/jpeg"))
-            TVPThrowExceptionMessage(TJS_W("Unsupported image encoder"));
-        std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(ttstr(*p[0]),TJS_BS_WRITE));
-        iTJSDispatch2 *options=count>2 && p[2]->Type()==tvtObject ? p[2]->AsObjectNoAddRef() : nullptr;
-        if(mime==TJS_W("image/bmp")) TVPSaveAsBMP(nullptr,stream.get(),image,TJS_W("bmp32"),options);
-        else if(mime==TJS_W("image/png")) TVPSaveAsPNG(nullptr,stream.get(),image,TJS_W("png"),options);
-        else if(mime==TJS_W("image/jpeg")) TVPSaveAsJPG(nullptr,stream.get(),image,TJS_W("jpg"),options);
+        tTJSVariant options=count>2 ? *p[2] : tTJSVariant();
+        auto object=options.Type()==tvtObject ? options.AsObjectNoAddRef() : nullptr;
+        int depth=number(options,TJS_W("depth"),24);
+        if(mime==TJS_W("image/png") || mime==TJS_W("image/bmp")) {
+            std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(ttstr(*p[0]),TJS_BS_WRITE));
+            if(mime==TJS_W("image/png")) TVPSaveAsPNG(nullptr,stream.get(),image,TJS_W("png"),object);
+            else TVPSaveAsBMP(nullptr,stream.get(),image,depth==8 ? TJS_W("bmp8") : depth==24 ? TJS_W("bmp24") : TJS_W("bmp32"),object);
+        } else {
+            KrkrDrawingEncoder encoder{};
+            if(mime==TJS_W("image/gif")) encoder.format=1;
+            else if(mime==TJS_W("image/tiff")) encoder.format=2;
+            else if(mime==TJS_W("image/jpeg")) encoder.format=3;
+            else TVPThrowExceptionMessage(TJS_W("Unsupported image encoder"));
+            encoder.depth=depth;
+            encoder.compression=number(options,TJS_W("compression"),-1);
+            encoder.scan=number(options,TJS_W("scanmethod"),8);
+            encoder.version=number(options,TJS_W("version"),10);
+            encoder.render=number(options,TJS_W("render"),12);
+            encoder.quality=number(options,TJS_W("quality"),75);
+            auto width=image->GetWidth(),height=image->GetHeight();
+            size_t stride=size_t(width)*4;
+            std::vector<unsigned char> pixels(stride*height);
+            for(unsigned y=0;y<height;++y)
+                std::memcpy(pixels.data()+y*stride,image->GetScanLine(y),stride);
+            DrawingBytes output;
+            if(krkr_drawing_bitmap_encode(pixels.data(),pixels.size(),width,height,&encoder,&output.data,&output.size)) {
+                if(result) *result=false;
+                return TJS_S_OK;
+            }
+            std::unique_ptr<tTJSBinaryStream> stream(TVPCreateStream(ttstr(*p[0]),TJS_BS_WRITE));
+            stream->WriteBuffer(output.data,output.size);
+        }
         if(result) *result=true;
         return TJS_S_OK;
     }

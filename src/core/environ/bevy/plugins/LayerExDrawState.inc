@@ -228,7 +228,10 @@ template<int Kind> static tjs_error TJS_INTF_METHOD imageOperation(tTJSVariant *
     }
     if(crop.width<=0 || crop.height<=0) return TJS_E_INVALIDPARAM;
     Matrix matrix;
-    if constexpr(Kind==0 || Kind==1) matrix.translate(coordinate(*p[0]),coordinate(*p[1]),1);
+    if constexpr(Kind==0 || Kind==1) {
+        matrix.translate(coordinate(*p[0])+(Kind==0 ? crop.x : 0),
+                         coordinate(*p[1])+(Kind==0 ? crop.y : 0),1);
+    }
     else if constexpr(Kind==2) {
         matrix.scale(coordinate(*p[2])/crop.width,coordinate(*p[3])/crop.height,1);
         matrix.translate(coordinate(*p[0]),coordinate(*p[1]),1);
@@ -240,16 +243,17 @@ template<int Kind> static tjs_error TJS_INTF_METHOD imageOperation(tTJSVariant *
     }
     if(native && native->record) {
         auto state=DrawState::get(obj);
-        if(state->recording) TVPThrowExceptionMessage(TJS_W("Recording nested metafile images is not supported"));
         Matrix offset; offset.translate(-crop.x,-crop.y,1);
-        auto view=BevyDrawGeometry::Matrix::product(BevyDrawGeometry::Matrix::product(offset,matrix),
-            BevyDrawGeometry::Matrix::product(state->transform,state->viewTransform));
+        auto world=BevyDrawGeometry::Matrix::product(BevyDrawGeometry::Matrix::product(offset,matrix),state->transform);
+        auto view=BevyDrawGeometry::Matrix::product(world,state->viewTransform);
         auto clip=layer->GetClip(); int32_t clipRect[4]={clip.left,clip.top,clip.right,clip.bottom};
         double sourceRect[4]={crop.x,crop.y,crop.width,crop.height};
         auto type=layer->GetType(); unsigned alpha=type==ltAddAlpha ? 1 : type==ltOpaque ? 2 : 0;
         layer->IndependMainImage(); auto target=layer->GetMainImage();
         if(krkr_layer_ex_record_draw(native->record->id,TVPBevyTextureID(target->GetTexture()),clipRect,view.elements.data(),alpha,sourceRect))
             TVPThrowExceptionMessage(TJS_W("Could not draw metafile image"));
+        if(state->recording && krkr_layer_ex_record_append_image(state->record->id,native->record->id,sourceRect,world.elements.data()))
+            TVPThrowExceptionMessage(TJS_W("Could not record metafile image"));
         TVPBevyInvalidateTexture(target->GetTexture()); layer->SetImageModified(true); if(state->updateWhenDraw) layer->Update();
         auto a=view.apply({crop.x,crop.y}),b=view.apply({crop.right(),crop.y}),c=view.apply({crop.right(),crop.bottom()}),d=view.apply({crop.x,crop.bottom()});
         double left=std::min({a.x,b.x,c.x,d.x}),top=std::min({a.y,b.y,c.y,d.y});

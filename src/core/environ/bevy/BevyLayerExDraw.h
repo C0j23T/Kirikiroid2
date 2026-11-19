@@ -77,11 +77,12 @@ extern "C" int krkr_layer_ex_draw(TVPBevyLayerExDraw *operation);
 
 struct TVPBevyDrawRecordInfo {
     uint32_t width,height,background_argb,operation_count;
-    double bounds[4];
+    double bounds[4],dpi[2];
 };
 
 extern "C" int krkr_layer_ex_record_create(uint32_t width,uint32_t height,uint32_t background,uint64_t *record);
 extern "C" int krkr_layer_ex_record_append(uint64_t record,const TVPBevyLayerExDraw *operation,uint32_t smoothing);
+extern "C" int krkr_layer_ex_record_append_image(uint64_t record,uint64_t image,const double *source_rect,const double *transform);
 extern "C" int krkr_layer_ex_record_decode(const void *bytes,size_t length,uint64_t *record);
 extern "C" int krkr_layer_ex_record_encode(uint64_t record,void **bytes,size_t *length);
 extern "C" int krkr_layer_ex_record_replay(uint64_t record,uint64_t target,const int32_t *clip,const double *view,uint32_t alpha_mode);
@@ -97,4 +98,4 @@ static_assert(sizeof(TVPBevyDrawPaint)==392);
 static_assert(offsetof(TVPBevyDrawPaint,tile)==200);
 static_assert(offsetof(TVPBevyDrawPaint,start_arrow)==328);
 static_assert(sizeof(TVPBevyLayerExDraw)==144);
-static_assert(sizeof(TVPBevyDrawRecordInfo)==48);
+static_assert(sizeof(TVPBevyDrawRecordInfo)==64);
