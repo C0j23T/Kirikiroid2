@@ -52,7 +52,7 @@ bool WritePixels(iTJSDispatch2 *object, LayerPixels &pixels) {
 }
 
 void Commit(const LayerPixels &pixels) {
-    TVPBevyInvalidateTexture(pixels.image->GetTexture());
+    TVPBevyInvalidateTexture(pixels.image->GetTexture(), false);
     pixels.layer->SetImageModified(true);
     pixels.layer->Update();
 }
