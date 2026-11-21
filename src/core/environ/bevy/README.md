@@ -23,7 +23,7 @@ this branch are GPL-2.0-or-later. The rest of Kirikiroid2 keeps its own license
 | `BevyUnsupported.cpp` | Subsystems that are not built: menus, DirectSound device entry points, BPG/JXR/PVR images. They fail with a clear message. |
 | `krkr_storage.h` (host include) | synchronous Rust filesystem ABI: local streams, directory snapshots, metadata, mutations, configuration and log files; C++ retains Storage names and archive semantics |
 | `BevyFileUtils.cpp` + `compat/platform/CCFileUtils.h` | the subset of cocos2d::FileUtils the core uses |
-| `WEBPLoader.cpp` | `visual/LoadWEBP.cpp`: `.webp` images are decoded by `krkr_shim` (`image-webp`) through `krkr_webp_*`, so libwebp is not linked |
+| `WEBPLoader.cpp` | `visual/LoadWEBP.cpp`: `krkr_shim` decodes static images with bundled libwebp and reads the first frame of animated images with `image-webp` through `krkr_webp_*` |
 | `ConfigFiles.h` | tinyxml2 for the preference and locale files (`environ/ConfigManager`): `krkr_shim` (`quick-xml`) parses and writes them, file I/O included, through `krkr_preference_*` / `krkr_locale_*` |
 | `compat/` | headers of cocos2d-x and of files missing from the open-source release (`Protect.h`, `tvpgl_route.h`, `aligned_allocator.h`), forwarding headers to system libraries, and `krkr_shim.h` |
 
